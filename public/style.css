@@ -1,0 +1,182 @@
+:root{color-scheme:dark;--bg:#0c0d0f;--panel:rgba(17,18,22,.94);--line:#2a2d34;--text:#f4f4f5;--muted:#9296a0;--accent:#ff638e;--cols:5}*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,"Microsoft YaHei",system-ui,sans-serif}header{height:62px;position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:18px;padding:0 18px;background:var(--panel);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}.brand{font-size:20px;font-weight:800}.brand span{font-size:12px;color:var(--muted);font-weight:500;margin-left:6px}nav{display:flex;gap:3px;overflow:auto}.mode,.filters button,.searchbar button,.taghead button{border:0;background:transparent;color:var(--muted);border-radius:9px;padding:8px 10px;white-space:nowrap;cursor:pointer}.mode.active,.mode:hover,.searchbar button:hover{background:#292c33;color:#fff}.filters{margin-left:auto;display:flex;gap:7px}.filters select,.filters button,.searchbar input,.searchbar button{border:1px solid var(--line);background:#181a1f;color:var(--text);border-radius:9px;padding:8px 11px;font:inherit}.searchbar{display:flex;gap:8px;padding:11px 14px 3px;width:100%;margin:0}.searchbar input{flex:1}.searchbar button{cursor:pointer}#tagbar{width:100%;margin:0;padding:7px 14px 9px}.taghead{display:flex;align-items:center;gap:10px;color:#ddd}.taghead button{margin-left:auto}.taghead strong{font-size:13px}.tag{display:inline-flex;gap:5px;margin:6px 5px 0 0;padding:5px 8px;background:#191b20;border:1px solid #2a2d34;border-radius:7px;color:#ddd;cursor:pointer;font-size:12px}.tag small{color:#8e93a0}.tag:hover{border-color:var(--accent);color:white}#gallery{padding:10px;display:grid;grid-template-columns:repeat(var(--cols),minmax(0,1fr));gap:8px;align-items:start}.column{display:flex;flex-direction:column;gap:8px}.card{position:relative;border-radius:8px;overflow:hidden;background:#17191d;content-visibility:auto;contain-intrinsic-size:300px}.card img{width:100%;height:auto;display:block;opacity:0;transition:opacity .2s,transform .2s}.card img.loaded{opacity:1}.card:hover img{transform:scale(1.012)}.badge{position:absolute;right:7px;top:7px;padding:3px 6px;border-radius:6px;background:#0009;font-size:10px;opacity:0}.card:hover .badge{opacity:1}#sentinel{height:90px;display:flex;justify-content:center;align-items:center;gap:10px;color:var(--muted)}.spinner{width:18px;height:18px;border:2px solid #444;border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}.done .spinner{display:none}@keyframes spin{to{transform:rotate(360deg)}}.menu{position:fixed;z-index:50;min-width:190px;padding:6px;background:#202228;border:1px solid #393c45;border-radius:11px;box-shadow:0 15px 45px #0008}.menu button{width:100%;border:0;background:transparent;color:white;text-align:left;padding:9px;border-radius:7px}.menu button:hover{background:#30333b}.hidden{display:none!important}#toast{position:fixed;left:50%;bottom:28px;z-index:60;transform:translate(-50%,20px);padding:9px 14px;border-radius:9px;background:#f5f5f5;color:#111;opacity:0;transition:.2s}.show{opacity:1!important;transform:translate(-50%,0)!important}dialog{background:#202228;color:white;border:1px solid #454955;border-radius:12px;min-width:360px}dialog::backdrop{background:#0009}dialog label{display:block;margin:12px 0;color:#bbb;font-size:13px}dialog input{display:block;width:100%;margin-top:5px;padding:9px;border-radius:7px;border:1px solid #444;background:#121318;color:white}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.dialog-actions button{padding:8px 14px}@media(max-width:1100px){:root{--cols:4}}@media(max-width:760px){:root{--cols:2}header{height:auto;flex-wrap:wrap;padding:9px}.brand span,#columns{display:none}.filters{margin-left:auto}.searchbar{padding:8px}.tagbar{padding:4px 8px}}
+.rank-wrap,.rating-picker{position:relative}.rank-menu,.rating-menu{position:absolute;top:calc(100% + 7px);left:0;z-index:30;display:none;min-width:130px;padding:6px;background:#202228;border:1px solid #393c45;border-radius:10px;box-shadow:0 15px 45px #0008}.rank-menu:not(.hidden),.rating-picker.open .rating-menu{display:block}.rank-menu button{display:block;width:100%;border:0;background:transparent;color:#eee;text-align:left;padding:8px;border-radius:6px;white-space:nowrap}.rank-menu button:hover{background:#30333b}.rating-menu label{display:flex;align-items:center;gap:5px;padding:7px 8px;white-space:nowrap;font-size:12px;color:#ddd}.rating-menu input{accent-color:#ff638e}.rating-menu #allRatings{width:100%;margin-top:4px;padding:6px;border:0;border-top:1px solid #393c45;background:transparent;color:#aaa}.rating-menu #allRatings:hover{color:#fff}.rating-dot{width:10px;height:10px;display:inline-block;border-radius:50%}.dot-g{background:#3dcc72}.dot-s{background:#f1c84b}.dot-q{background:#9a65ed}.dot-e{background:#ef4d5e}
+
+.badge.rating-g{background:#3dcc72;color:#062b13}.badge.rating-s{background:#f1c84b;color:#3b2d00}.badge.rating-q{background:#9a65ed;color:#16092e}.badge.rating-e{background:#ef4d5e;color:#33070c}
+
+.badge{position:absolute;right:8px;top:8px;width:14px;height:14px;padding:0;border-radius:50%;font-size:0;line-height:14px;box-shadow:0 1px 5px #0009;opacity:1}
+.badge.rating-g{background:#31c66b}.badge.rating-s{background:#f0c53f}.badge.rating-q{background:#9564e8}.badge.rating-e{background:#e84b5b}
+/* compact navigation popovers and collapsible tag panel */
+.tag-title{display:inline-flex;align-items:center;gap:8px;border:0;background:transparent;color:#ddd;padding:3px 0;cursor:pointer}.tag-title span{color:var(--muted);font-size:14px;transition:transform .2s}.collapsed #tags{display:none}.collapsed .tag-title span{transform:rotate(-90deg)}
+#tagbar{transition:padding .2s}.collapsed{padding-bottom:4px}.rank-menu{min-width:150px}
+
+/* 高清预览：桌面悬浮、手机点击 */
+.lightbox{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;background:rgba(4,5,8,.68);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:5vh 5vw;cursor:zoom-out}.lightbox img{display:block;max-width:50vw;max-height:70vh;width:auto;height:auto;object-fit:contain;border-radius:10px;box-shadow:0 18px 70px #000b;cursor:default}.lightbox-close{position:absolute;right:22px;top:16px;width:42px;height:42px;border:1px solid #ffffff35;border-radius:50%;background:#15171dcc;color:#fff;font-size:28px;line-height:1;cursor:pointer}.lightbox-close:hover{background:#30333b}.lightbox-hint{position:absolute;bottom:22px;color:#bbb;font-size:12px;pointer-events:none}.lightbox #lightboxHint{position:absolute;bottom:22px;color:#bbb;font-size:12px;pointer-events:none}
+@media(max-width:760px){.lightbox{padding:16px}.lightbox img{max-width:92vw;max-height:72vh;border-radius:8px}.lightbox-close{right:12px;top:10px;width:38px;height:38px}.lightbox #lightboxHint{bottom:12px}.card{cursor:pointer}}
+
+/* 桌面悬浮预览：靠近当前卡片，不占满窗口、不居中；仅做很轻的背景虚化 */
+.hover-preview-backdrop{position:fixed;inset:0;z-index:70;background:rgba(10,12,16,.035);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);pointer-events:none}
+.hover-preview{position:fixed;z-index:75;display:flex;align-items:center;justify-content:center;padding:8px;background:rgba(25,27,32,.88);border:1px solid rgba(120,160,255,.8);border-radius:16px;box-shadow:0 14px 42px rgba(0,0,0,.38);pointer-events:auto;transition:opacity .14s,transform .14s;overflow:hidden}
+.hover-preview img{display:block;width:100%;height:auto;max-height:calc(72vh - 16px);object-fit:contain;border-radius:10px}
+@media(max-width:760px){.hover-preview,.hover-preview-backdrop{display:none!important}}
+#loginStatus{min-height:18px;margin-top:10px;color:#aeb7c8;font-size:12px}
+
+/* 点击卡片后的邻侧高清预览：尺寸随原图比例和当前窗口计算，不使用固定宽高。 */
+.lightbox{position:fixed;inset:0;z-index:80;display:block;background:rgba(4,5,8,.10);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);padding:0;cursor:default}
+.lightbox img{position:fixed;left:var(--panel-left);top:var(--panel-top);width:var(--panel-width);height:var(--panel-height);max-width:none;max-height:none;object-fit:contain;display:block;padding:8px;background:rgba(25,27,32,.90);border:1px solid rgba(120,160,255,.82);border-radius:14px;box-shadow:0 14px 42px rgba(0,0,0,.40);cursor:default}
+.lightbox-close{position:fixed;left:calc(var(--panel-left) + var(--panel-width) - 42px);top:calc(var(--panel-top) + 8px);right:auto;width:34px;height:34px;border:1px solid #ffffff45;border-radius:50%;background:#15171dcc;color:#fff;font-size:23px;line-height:1;cursor:pointer}
+.lightbox-close:hover{background:#30333b}
+.lightbox #lightboxHint{position:fixed;left:var(--panel-left);top:calc(var(--panel-top) + var(--panel-height) + 8px);bottom:auto;color:#c4cad5;font-size:12px;pointer-events:none}
+.hover-preview,.hover-preview-backdrop{display:none!important}
+@media(max-width:760px){.lightbox{background:rgba(4,5,8,.12);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}.lightbox img{left:5vw;top:50%;transform:translateY(-50%);width:90vw;height:auto;max-height:78vh;padding:6px}.lightbox-close{left:auto;right:12px;top:12px}.lightbox #lightboxHint{left:5vw;top:auto;bottom:12px}}
+
+.column-picker{position:relative}.column-menu{position:absolute;top:calc(100% + 7px);right:0;z-index:35;display:none;min-width:170px;padding:8px;background:#202228;border:1px solid #393c45;border-radius:10px;box-shadow:0 15px 45px #0008}.column-picker.open .column-menu{display:block}.column-menu strong{display:block;padding:3px 8px 7px;color:#eee;font-size:12px}.column-menu button{display:block;width:100%;border:0;background:transparent;color:#ddd;text-align:left;padding:7px 8px;border-radius:6px;cursor:pointer}.column-menu button:hover,.column-menu button.active{background:#30333b;color:#fff}.column-menu small{display:block;padding:7px 8px 2px;color:#8e93a0;font-size:10px;border-top:1px solid #393c45;margin-top:4px}
+@media(max-width:760px){.column-picker{display:none}}
+
+/* 多选热门标签与本地收藏 */
+.taghead{min-height:34px}.taghead #selectedTagCount{font-size:12px;color:#8e93a0;white-space:nowrap}.taghead .tag-action{margin-left:0;border:1px solid #2a2d34;background:#181a1f;padding:6px 9px}.taghead .tag-action:disabled{opacity:.38;cursor:not-allowed}.taghead .tag-title{margin-left:0;margin-right:auto}
+#tags{display:flex;flex-wrap:wrap;align-content:flex-start;gap:7px;max-height:min(42vh,360px);overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:3px 7px 8px 0}
+#tags::-webkit-scrollbar{width:8px}#tags::-webkit-scrollbar-track{background:#15171b;border-radius:999px}#tags::-webkit-scrollbar-thumb{background:#464b57;border-radius:999px}
+.tag{margin:0;align-items:center}.tag span{font-weight:600}.tag em{font-size:9px;font-style:normal;color:#777e8c;margin-left:2px}.tag.selected{color:#fff;background:#344d78;border-color:#71a3ff;box-shadow:0 0 0 1px #71a3ff22 inset}.tag.selected small{color:#cfe0ff}.tag.selected em{color:#b9cef4}
+.favorite-mode #favoriteCount{display:inline-flex;min-width:18px;height:18px;align-items:center;justify-content:center;margin-left:3px;padding:0 5px;border-radius:999px;background:#343741;color:#ddd;font-size:10px}.favorite-mode.active #favoriteCount{background:#ff638e;color:#fff}
+.favorite-button{position:absolute;left:7px;top:7px;z-index:3;width:31px;height:31px;padding:0;border:1px solid #ffffff2c;border-radius:50%;background:#101216ad;color:#fff;font-size:21px;line-height:29px;cursor:pointer;opacity:.62;transition:opacity .15s,transform .15s,background .15s}.card:hover .favorite-button,.favorite-button:focus-visible,.favorite-button.active{opacity:1}.favorite-button:hover{transform:scale(1.08)}.favorite-button.active{color:#ff638e;background:#28151dcc;border-color:#ff638e80}
+@media(max-width:760px){#tags{max-height:46vh}.taghead{flex-wrap:wrap}.taghead .tag-title{flex-basis:100%}.favorite-button{opacity:1;width:34px;height:34px;line-height:32px}.favorite-mode{display:inline-flex!important;align-items:center}}
+
+/* 加载状态：只有请求进行中才显示旋转图标 */
+#sentinel .spinner{display:none}
+#sentinel.loading .spinner{display:inline-block}
+#sentinel.done .spinner{display:none}
+
+.favorite-folders{display:flex;gap:8px;padding:8px 12px 2px}.favorite-folders button{border:1px solid var(--line);background:#181a1f;color:#bfc3cc;border-radius:9px;padding:7px 12px;cursor:pointer}.favorite-folders button.active,.favorite-folders button:hover{background:#30333b;color:#fff}.favorite-folders span{font-size:11px;color:#9296a0}.completed-button{position:absolute;right:7px;bottom:7px;z-index:3;width:31px;height:31px;padding:0;border:1px solid #ffffff40;border-radius:50%;background:#101216ad;color:#d6d9df;font-size:18px;line-height:28px;cursor:pointer;opacity:.72}.completed-button:hover,.completed-button.active{opacity:1}.completed-button.active{background:#35b878;color:#fff;border-color:#67e0a5} @media(max-width:760px){.completed-button{opacity:1;width:34px;height:34px;line-height:31px}}
+
+/* Reverse queue: square, aspect-aware cards. Finished cards only show image + prompt. */
+.ai-button{position:absolute;left:7px;bottom:7px;z-index:4;width:31px;height:31px;border:1px solid #8d9fd580;border-radius:50%;background:#1b2944da;color:#e7edff;font-size:10px;font-weight:800;cursor:pointer}
+.ai-button:hover{background:#4266a4}
+#gallery.reverse-gallery{align-items:start}
+.reverse-card{aspect-ratio:1;display:flex;overflow:hidden;min-width:0;background:#1b1d22;border:1px solid #30343c;border-radius:9px;content-visibility:auto;contain-intrinsic-size:260px}
+.reverse-card.landscape{flex-direction:row}.reverse-card.portrait{flex-direction:column}
+.reverse-picture{min-width:0;min-height:0;background:#111318;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.reverse-card.landscape .reverse-picture{width:60%;height:100%;flex-shrink:0}
+.reverse-card.portrait .reverse-picture{height:60%;width:100%;flex-shrink:0}
+.reverse-picture img{width:100%;height:100%;object-fit:contain;display:block;cursor:zoom-in}
+.reverse-card.uncached .reverse-picture{filter:grayscale(1);opacity:.4}
+.reverse-panel{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column;gap:5px;padding:7px;overflow:auto;scrollbar-width:thin;font-size:11px}
+.reverse-panel button,.preset-picker button{border:1px solid #444a56;border-radius:6px;background:#303440;color:#f3f3f3;padding:5px;cursor:pointer;font:inherit}
+.reverse-panel button:disabled{opacity:.4;cursor:not-allowed}
+.reverse-status{display:flex;align-items:center;gap:5px;min-width:0;color:#aeb4bd;overflow-wrap:anywhere}
+.reverse-lamp{display:inline-block;width:9px;height:9px;flex-shrink:0;border-radius:50%;background:#5c626b}
+.reverse-lamp.green{background:#32c97e;box-shadow:0 0 7px #32c97e88}.reverse-lamp.red{background:#ec5262;box-shadow:0 0 7px #ec526288}
+.reverse-toggle{display:flex;align-items:center;gap:4px;cursor:pointer}.reverse-toggle input{margin:0}
+.preset-picker{position:relative}.preset-picker summary,.prompt-details summary{cursor:pointer;color:#c7d7f8}
+.preset-picker[open]{z-index:6}.preset-picker button{display:block;width:100%;text-align:left;margin-top:3px}
+.prompt-details{min-width:0}.prompt-text{white-space:pre-wrap;overflow-wrap:anywhere;max-height:130px;overflow:auto;padding:4px;color:#c7cbd3}
+.release-button{margin-top:auto}
+@media(max-width:760px){.ai-button{width:34px;height:34px}.favorite-folders{overflow-x:auto;white-space:nowrap}.reverse-panel{font-size:10px;padding:4px;gap:3px}}
+
+/* Aspect-aware reverse cards: portrait left at full height, landscape on top at full width. */
+#gallery{grid-template-columns:repeat(var(--gallery-cols,var(--cols)),minmax(0,1fr))}
+.reverse-card{position:relative}
+.reverse-card.portrait{flex-direction:row}
+.reverse-card.landscape{flex-direction:column}
+.reverse-card.portrait .reverse-picture{width:auto;height:100%;flex-shrink:0}
+.reverse-card.landscape .reverse-picture{width:100%;height:auto;flex-shrink:0}
+.reverse-picture{align-items:flex-start;justify-content:flex-start}
+.reverse-picture img{object-fit:cover;object-position:center}
+.reverse-card .favorite-button,.reverse-card .ai-button,.reverse-card .completed-button{position:absolute;z-index:8;opacity:1}
+.reverse-card .favorite-button{left:7px;top:7px}
+.reverse-card .ai-button{left:7px;bottom:7px}
+.reverse-card .completed-button{right:7px;bottom:7px}
+.reverse-card .completed-button:disabled{opacity:.4;cursor:not-allowed}
+.reverse-card .reverse-panel{padding:9px;gap:7px}
+@media(max-width:760px){.reverse-card .reverse-panel{padding:6px;gap:4px}}
+
+/* Keep actions legible on narrow finished cards without changing desktop column preference. */
+@media(max-width:760px){.reverse-card .favorite-button,.reverse-card .ai-button,.reverse-card .completed-button{width:29px;height:29px;line-height:26px}.reverse-card .favorite-button{font-size:19px}.reverse-card .completed-button{font-size:16px}.reverse-card .ai-button{font-size:9px}}
+
+/* Bottom actions never cover the prompt control; unfinished cards keep their own scroll area. */
+.reverse-card .reverse-panel{padding-bottom:43px}
+.reverse-card .copy-prompt[hidden]{display:none}
+@media(max-width:760px){.reverse-card .reverse-panel{padding-bottom:39px}}
+
+/* Reverse queue control surface: no nested scrolling, image-only corner controls. */
+.reverse-card .reverse-picture{position:relative}
+.reverse-card .reverse-panel{overflow:hidden;scrollbar-width:none;padding:8px;gap:6px}
+.reverse-card .reverse-panel button,.reverse-card .preset-picker{font:inherit}
+.reverse-card.pending-card .reverse-panel{padding:9px;gap:9px}
+.reverse-card.pending-card .copy-prompt{display:block;width:100%;flex:none;white-space:nowrap;text-align:center;border:1px solid #657184;background:#262c38;border-radius:8px;padding:7px 8px;font-size:12px}
+.reverse-card.pending-card .reverse-actions{display:flex;align-items:center;justify-content:space-between;gap:7px;min-width:0;flex:none}
+.reverse-card.pending-card .reverse-status{white-space:nowrap;flex:none;color:#d9dce4;font-size:12px}
+.reverse-card.pending-card .reverse-status.retryable{cursor:pointer}
+.reverse-card.pending-card .reverse-lamp{width:12px;height:12px}
+.reverse-card.pending-card .reverse-queue{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;flex:none;font-size:11px;color:#bdc4d0}
+.reverse-card.pending-card .queue-button{display:inline-grid;place-items:center;width:29px;height:29px;padding:0;border-radius:50%;border:1px solid #7889a3;background:#222a36;color:#e3ecff;font-size:12px;font-weight:700;cursor:pointer}
+.reverse-card.pending-card .queue-button.active{background:#4065a0;border-color:#8badf4;color:#fff}
+.reverse-card.pending-card .queue-button:disabled{opacity:.5}
+.reverse-card.pending-card .release-button{margin:0;flex:none;border-radius:999px;padding:5px 11px;background:#3a4c43;border:1px solid #669278;color:#dff7e8;font-size:12px;white-space:nowrap}
+.reverse-card.pending-card .release-button:disabled{opacity:.45}
+.reverse-card.pending-card .preset-picker{display:block;width:100%;min-width:0;flex:none;background:#252a34;border:1px solid #5e687a;border-radius:8px;color:#f3f5fa;padding:7px 8px;font-size:12px;cursor:pointer}
+.reverse-card.pending-card.portrait .reverse-panel{flex-direction:row;align-items:center;gap:4px;padding:5px}
+.reverse-card.pending-card.portrait .reverse-actions{display:contents}
+.reverse-card.pending-card.portrait .copy-prompt{width:auto;padding:5px 6px;font-size:10px}
+.reverse-card.pending-card.portrait .reverse-status{font-size:10px;gap:3px}
+.reverse-card.pending-card.portrait .reverse-lamp{width:11px;height:11px}
+.reverse-card.pending-card.portrait .reverse-queue{gap:2px;font-size:10px}
+.reverse-card.pending-card.portrait .queue-button{width:23px;height:23px;font-size:10px}
+.reverse-card.pending-card.portrait .release-button{padding:4px 6px;font-size:10px}
+.reverse-card.pending-card.portrait .preset-picker{width:auto;max-width:94px;padding:4px 2px;font-size:10px}
+@media(max-width:760px){
+ .reverse-card.pending-card.landscape .reverse-panel{padding:7px;gap:5px}
+ .reverse-card.pending-card.landscape .reverse-actions{gap:4px}
+ .reverse-card.pending-card.landscape .reverse-queue{font-size:10px;gap:3px}
+ .reverse-card.pending-card.landscape .release-button{padding:4px 8px}
+ .reverse-card.pending-card.portrait .reverse-queue>span{display:none}
+ .reverse-card.pending-card.portrait .preset-picker{max-width:68px}
+ .reverse-card.pending-card.portrait .copy-prompt{font-size:0;padding:4px 6px}
+ .reverse-card.pending-card.portrait .copy-prompt::after{content:'复制';font-size:10px}
+}
+
+/* Portrait cards keep one compact toolbar when space permits; on phones it wraps rather than clipping. */
+.reverse-card.pending-card.portrait .reverse-panel>*{flex-shrink:0}
+@media(max-width:760px){
+ .reverse-card.pending-card.portrait .reverse-panel{flex-wrap:wrap;align-content:center;justify-content:center;gap:5px}
+ .reverse-card.pending-card.portrait .preset-picker{max-width:96px}
+}
+
+.prompt-dialog{width:min(720px,92vw);max-height:82vh;min-width:0;overflow:auto;padding:18px}
+.prompt-dialog>button{float:right;border:1px solid #586071;background:#303747;color:#fff;border-radius:8px;padding:6px 13px;cursor:pointer}
+.prompt-dialog-text{clear:both;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.6;font-family:inherit;color:#e4e7ee}
+
+
+/* Portrait reverse cards: each action occupies its own row. */
+.reverse-card.pending-card.portrait .reverse-panel{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;flex-wrap:nowrap;gap:8px;padding:9px}
+.reverse-card.pending-card.portrait .reverse-actions{display:contents}
+.reverse-card.pending-card.portrait .reverse-panel>*{flex-shrink:0}
+.reverse-card.pending-card.portrait .copy-prompt{width:100%;font-size:11px;padding:5px}
+.reverse-card.pending-card.portrait .copy-prompt::after{content:none}
+.reverse-card.pending-card.portrait .reverse-status{width:100%;font-size:11px;gap:5px}
+.reverse-card.pending-card.portrait .reverse-queue{width:100%;justify-content:space-between;font-size:10px;gap:3px}
+.reverse-card.pending-card.portrait .reverse-queue>span{display:inline}
+.reverse-card.pending-card.portrait .queue-button{width:26px;height:26px;font-size:11px}
+.reverse-card.pending-card.portrait .release-button{width:100%;font-size:11px;padding:5px}
+.reverse-card.pending-card.portrait .preset-picker{width:100%;max-width:none;font-size:11px;padding:5px 3px}
+@media(max-width:760px){.reverse-card.pending-card.portrait .reverse-panel{gap:5px;padding:5px}}
+#metadataUpload{margin:8px 12px;padding:10px;border:1px solid #39414f;background:#1e222b;border-radius:9px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12px;color:#bdc6d7}
+#metadataUpload[hidden]{display:none}
+#metadataUpload label{color:#fff;cursor:pointer}#metadataUpload input{max-width:220px;margin-left:8px}
+.metadata-card .reverse-panel{padding:10px;gap:7px;font-size:11px;overflow:hidden}
+.metadata-card .metadata-line{line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.metadata-card .metadata-line strong{color:#a7bcdb}
+.metadata-card .metadata-loras{min-height:0;max-height:28%;overflow:auto;scrollbar-width:thin;color:#cbd4e0;overflow-wrap:anywhere}
+.metadata-card .metadata-loras summary{cursor:pointer;color:#dbe6f4}
+.metadata-card .metadata-actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:auto}
+.metadata-card .metadata-actions button{font-size:10px;padding:5px;white-space:nowrap}
+@media(max-width:760px){.metadata-card .reverse-panel{padding:6px;gap:4px;font-size:10px}.metadata-card .metadata-actions button{font-size:9px;padding:3px}}
+
+/* Four pending cards per desktop row, while preserving distinct portrait control rows. */
+@media (min-width:1101px){
+ .reverse-card.pending-card.portrait .reverse-panel{padding:5px;gap:4px}
+ .reverse-card.pending-card.portrait .copy-prompt{padding:4px;font-size:10px}
+ .reverse-card.pending-card.portrait .reverse-status{font-size:10px}
+ .reverse-card.pending-card.portrait .queue-button{width:23px;height:23px;font-size:10px}
+ .reverse-card.pending-card.portrait .release-button{padding:4px;font-size:10px}
+ .reverse-card.pending-card.portrait .preset-picker{padding:4px 2px;font-size:10px}
+}

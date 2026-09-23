@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DFlow</title>
+  <link rel="stylesheet" href="/style.css?v=20260923-12">
+</head>
+<body>
+<header>
+  <div class="brand">DFlow <span>本地瀑布浏览器</span></div>
+  <nav>
+    <button class="mode active" data-mode="latest">最新</button>
+    <button class="mode" data-mode="popular-day">日热门</button>
+    <button class="mode" data-mode="popular-week">周热门</button>
+    <button class="mode" data-mode="popular-month">月热门</button>
+    <button class="mode" data-mode="viewed">日浏览</button>
+    <button class="mode" data-mode="favcount" title="近一个月榜单">收藏</button>
+    <button class="mode" data-mode="comment" title="近一个月榜单">评论</button>
+    <button class="mode" data-mode="upvotes" title="近一个月榜单">点赞</button>
+    <button class="mode" data-mode="score" title="近一个月榜单">高分</button>
+    <button class="mode" data-mode="rank" title="近一个月榜单">趋势</button>
+    <button class="mode" data-mode="mpixels" title="近一个月按总像素排序">大图</button>
+    <button class="mode favorite-mode" data-mode="favorites">本地收藏 <span id="favoriteCount">0</span></button>
+  </nav>
+  <div class="filters">
+    <div class="column-picker" id="columnPicker">
+      <button id="columnButton" aria-expanded="false">列数 5⌄</button>
+      <div class="column-menu" id="columnMenu" role="menu">
+        <strong>每行图片数</strong><div id="columnOptions"></div><small>也可使用 Ctrl + 滚轮调整</small>
+      </div>
+    </div>
+    <div class="rating-picker" id="ratingPicker">
+      <button id="ratingButton">分级⌄</button>
+      <div class="rating-menu">
+        <label><input type="checkbox" value="g" checked> <i class="rating-dot dot-g"></i>全年龄</label>
+        <label><input type="checkbox" value="s" checked> <i class="rating-dot dot-s"></i>敏感</label>
+        <label><input type="checkbox" value="q" checked> <i class="rating-dot dot-q"></i>较敏感</label>
+        <label><input type="checkbox" value="e" checked> <i class="rating-dot dot-e"></i>成人</label>
+        <button id="allRatings">全选</button>
+      </div>
+    </div>
+    <button id="refresh">刷新</button><button id="settings">登录</button>
+  </div>
+</header>
+<section class="searchbar">
+  <input id="search" placeholder="搜索标签、角色、作品，例如：blue_eyes rating:g">
+  <button id="searchBtn">搜索</button><button id="clearBtn">清除</button>
+</section>
+<section id="tagbar" class="collapsed">
+  <div class="taghead">
+    <button id="tagToggle" class="tag-title"><strong>热门标签</strong><span>⌄</span></button>
+    <span id="selectedTagCount">未选择</span>
+    <button id="clearTags" class="tag-action" disabled>清空选择</button>
+    <button id="refreshTags" class="tag-action">重新拉取</button>
+  </div>
+  <div id="tags" aria-label="热门标签，可多选"></div>
+</section>
+<div id="favoriteFolders" class="favorite-folders hidden" aria-label="本地收藏文件夹">
+  <button type="button" data-folder="original" class="active">原始收藏</button>
+    <button type="button" data-folder="pending">待反推 <span id="pendingCount">0</span></button>
+  <button type="button" data-folder="completed">已完成 <span id="completedCount">0</span></button>
+  <button type="button" data-folder="metadata">元数据</button>
+</div>
+<div id="metadataUpload" hidden><label>导入 ComfyUI PNG（支持多选）<input id="metadataFiles" type="file" accept="image/png,.png" multiple></label><span>需图片本身保留工作流／生成信息；网站预览图通常不含元数据。</span></div>
+<main id="gallery" aria-live="polite"></main>
+<div id="sentinel"><span class="spinner"></span><span id="status">正在加载…</span></div>
+<div id="menu" class="menu hidden">
+  <button data-action="favorite">加入本地收藏</button>
+  <button data-action="copy">复制高清图片</button>
+  <button data-action="url">复制高清图地址</button>
+  <button data-action="open">新标签页打开高清图</button>
+</div>
+<dialog id="settingsDialog">
+  <h3>Danbooru 登录</h3>
+  <p>用户名填 Danbooru 的“账户名称”；API Key 填 API Keys 页面中的 Personal API Key。公开浏览不填写也能用。</p>
+  <label>用户名<input id="loginName" autocomplete="username" placeholder="例如：你的账户名称"></label>
+  <label>Personal API Key<input id="loginKey" type="password" autocomplete="off" placeholder="粘贴 Personal API Key"></label>
+  <div id="loginStatus" role="status"></div>
+  <div class="dialog-actions"><button id="testSettings">测试登录</button><button id="saveSettings">保存</button><button id="closeSettings">关闭</button></div>
+</dialog>
+<div id="lightbox" class="lightbox hidden" aria-hidden="true">
+  <button id="lightboxClose" class="lightbox-close" aria-label="关闭">×</button>
+  <img id="lightboxImage" alt="高清预览"><div id="lightboxHint">点击空白处关闭</div>
+</div>
+<div id="toast"></div>
+<script type="module" src="/app.js?v=20260923-12"></script>
+</body>
+</html>
+
+
+
