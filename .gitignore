@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Runtime and Local User Data
+data/
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
