@@ -300,26 +300,51 @@ DFlow 在**不登录任何账号的情况下完全可用**。如果您拥有 Dan
 | **卡片快捷菜单** | `鼠标右键点击卡片` | 呼出菜单：收藏、复制高清图、复制直链、新标签打开 |
 | **搜索触发** | `Enter 键` | 搜索框内回车立即检索 |
 
-### 2. AI 提示词反推自动化流程 (Codex / Agent 联动)
-1. **收集与标记**：在刷图过程中将心仪图片一键加入本地收藏；
-2. **移入反推**：在「本地收藏 → 原始收藏」中点击卡片左下角的 **`AI`** 按钮，卡片移入「待反推」，服务端开始串行缓存高清大图；
-3. **选择预设**：在待反推卡片下拉菜单中选择风格（如“艺术导演扩写”、“动漫专用”）；
-4. **Agent 自动化驱动**：
-   通过集成的 `reverse-cli.mjs` 命令行工具，AI Agent 或自动化脚本可直接与后台交互：
-   ```bash
-   # 查看当前待反推队列与就绪状态
-   node scripts/reverse-cli.mjs status
+### 2. AI 提示词反推自动化流程 (搭配 Krea2 通用版 Skill 自动反推)
 
-   # 获取队列下一个待处理任务 (自动置为 processing 状态)
-   node scripts/reverse-cli.mjs next
+DFlow 不仅支持在网页端管理待反推队列，还提供了与 AI Agent（如 Antigravity、Codex、Claude 等）联动的全自动批量反推能力：
 
-   # 将 AI 生成的提示词文件回写至系统
-   node scripts/reverse-cli.mjs complete <ID> <PROMPT_FILE_PATH> <PRESET>
+#### 📥 1. 获取与安装配套 Skill
+- **下载地址**：前往项目的 [GitHub Releases 页面](https://github.com/oldiron-666/Dflow/releases) 下载配套的 [**`krea2-general-export.zip`**](https://github.com/oldiron-666/Dflow/releases/latest)。
+- **安装方式**：
+  - 解压缩包，将其中的 `krea2-general/` 文件夹放入对应 AI 工具的技能目录：
+    - **Antigravity / Gemini CLI**：`~/.gemini/antigravity/skills/krea2-general` 或 `~/.gemini/config/skills/krea2-general`
+    - **Codex**：`~/.codex/skills/krea2-general`
+  - 该 Skill 内置《通用反推》与《通用扩写》双参考标准，专为 DFlow 队列无缝调度定制。
 
-   # 若生成遇到异常标记失败与原因
-   node scripts/reverse-cli.mjs fail <ID> <REASON>
-   ```
-5. **释放至已完成**：生成完毕后卡片呈现绿灯，点击 **「释放」** 按钮，该作品和反推词即刻永久归档至「已完成」栏目。
+#### 🔄 2. DFlow 本地队列准备
+1. 刷图时点击卡片左下角的 **`AI`** 按钮移入「待反推」；
+2. 服务端在后台串行下载 Danbooru 高清大图至 `data/reverse/pending/`（卡片显示缓存状态）；
+3. **预设选择**：在待反推卡片的预设下拉菜单中选择 **「通用扩写」**（Skill 会校验预设必须为通用扩写，严禁假冒其他风格）；
+4. 确保卡片右下角的自动反推开关（绿标）开启。
+
+#### 🤖 3. 唤醒 AI 自动批量反推
+直接向已加载该 Skill 的 AI 助手发送指令（例如：*“启动 DFlow 自动化反推”*）：
+1. **自动探测**：Skill 自动运行 `node scripts/reverse-cli.mjs status` 探测本地 DFlow 服务状态，汇总并向您汇报当前待反推总数与可领取数；
+2. **确认执行**：在您确认开始后，Skill 逐张调用 `node scripts/reverse-cli.mjs next` 领取任务；
+3. **视觉反推与扩写**：AI 仔细观察本地高清缓存图，严格区分客观事实与合理推测，完成高质量的完整通用扩写提示词（确保达到标准长度与描述丰富度）；
+4. **自动回写验证**：调用 `node scripts/reverse-cli.mjs complete <ID> <PROMPT_FILE> 通用扩写` 自动写回系统；前端卡片立即亮起绿灯，提示词就绪。
+
+#### 🚀 4. 释放至已完成归档
+提示词就绪且大图缓存就绪后，点击卡片右上角的 **「释放」** 按钮，系统自动将高清缓存大图永久迁移至 `data/favorites/completed/`，图片与反推提示词归档至「已完成」专栏，随时可展开查看或一键复制。
+
+---
+
+#### 🛠️ 附：自动化命令行接口 (reverse-cli.mjs) 说明
+如果需要自研脚本或二次开发，可直接调用内置 CLI：
+```bash
+# 查看待反推队列状态与可执行数量
+node scripts/reverse-cli.mjs status
+
+# 领取队列中下一张待反推任务 (状态自动转为 processing)
+node scripts/reverse-cli.mjs next
+
+# 将生成的提示词回写至本地系统 (需指定卡片 ID、提示词文本路径及预设)
+node scripts/reverse-cli.mjs complete <ID> <PROMPT_FILE_PATH> 通用扩写
+
+# 标记某张图片反推失败并记录原因
+node scripts/reverse-cli.mjs fail <ID> <REASON>
+```
 
 ### 3. ComfyUI 原图导入与参数复用
 1. 切换至 **「本地收藏」 -> 「元数据」** 标签栏；
