@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>DFlow</title>
-  <link rel="stylesheet" href="/style.css?v=20260923-12">
+  <link rel="stylesheet" href="/style.css?v=20260924-13">
 </head>
 <body>
 <header>
@@ -22,6 +22,7 @@
     <button class="mode" data-mode="rank" title="近一个月榜单">趋势</button>
     <button class="mode" data-mode="mpixels" title="近一个月按总像素排序">大图</button>
     <button class="mode favorite-mode" data-mode="favorites">本地收藏 <span id="favoriteCount">0</span></button>
+    <button class="mode" data-mode="metadata">元数据库</button>
   </nav>
   <div class="filters">
     <div class="column-picker" id="columnPicker">
@@ -58,14 +59,16 @@
 </section>
 <div id="favoriteFolders" class="favorite-folders hidden" aria-label="本地收藏文件夹">
   <button type="button" data-folder="original" class="active">原始收藏</button>
-    <button type="button" data-folder="pending">待反推 <span id="pendingCount">0</span></button>
+  <button type="button" data-folder="pending">待反推 <span id="pendingCount">0</span></button>
+  <button type="button" data-folder="worded">有词区 <span id="wordedCount">0</span></button>
   <button type="button" data-folder="completed">已完成 <span id="completedCount">0</span></button>
-  <button type="button" data-folder="metadata">元数据</button>
+  <button type="button" id="manualWorded">手写提示词</button>
 </div>
 <div id="metadataUpload" hidden><label>导入 ComfyUI PNG（支持多选）<input id="metadataFiles" type="file" accept="image/png,.png" multiple></label><span>需图片本身保留工作流／生成信息；网站预览图通常不含元数据。</span></div>
 <main id="gallery" aria-live="polite"></main>
 <div id="sentinel"><span class="spinner"></span><span id="status">正在加载…</span></div>
 <div id="menu" class="menu hidden">
+  <button data-action="create-prompt">创建提示词卡片</button>
   <button data-action="favorite">加入本地收藏</button>
   <button data-action="copy">复制高清图片</button>
   <button data-action="url">复制高清图地址</button>
@@ -76,6 +79,8 @@
   <p>用户名填 Danbooru 的“账户名称”；API Key 填 API Keys 页面中的 Personal API Key。公开浏览不填写也能用。</p>
   <label>用户名<input id="loginName" autocomplete="username" placeholder="例如：你的账户名称"></label>
   <label>Personal API Key<input id="loginKey" type="password" autocomplete="off" placeholder="粘贴 Personal API Key"></label>
+  <label>Google Cloud Translation API Key<input id="googleTranslateKey" type="password" autocomplete="off" placeholder="可选：Google Cloud Translation API Key"></label>
+  <p class="settings-help">仅用于提示词翻译，不会发送给 Danbooru；需启用 Cloud Translation API 和结算。</p>
   <div id="loginStatus" role="status"></div>
   <div class="dialog-actions"><button id="testSettings">测试登录</button><button id="saveSettings">保存</button><button id="closeSettings">关闭</button></div>
 </dialog>
@@ -84,9 +89,6 @@
   <img id="lightboxImage" alt="高清预览"><div id="lightboxHint">点击空白处关闭</div>
 </div>
 <div id="toast"></div>
-<script type="module" src="/app.js?v=20260923-12"></script>
+<script type="module" src="/app.js?v=20260924-13"></script>
 </body>
 </html>
-
-
-

@@ -180,3 +180,101 @@
  .reverse-card.pending-card.portrait .release-button{padding:4px;font-size:10px}
  .reverse-card.pending-card.portrait .preset-picker{padding:4px 2px;font-size:10px}
 }
+
+.reverse-instruction{box-sizing:border-box;width:100%;min-width:0;padding:5px 7px;background:#232b38;color:#e5ebf3;border:1px solid #526074;border-radius:6px;font-size:11px}.reverse-instruction:focus{outline:1px solid #8aa6ca}
+.reverse-card.pending-card.portrait .reverse-instruction{width:100%;padding:4px;font-size:10px}
+.text-summary{display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;overflow-wrap:anywhere;color:#e6e7ec;font-size:13px;line-height:1.5}
+.cache-bar{padding:5px 12px;display:flex;align-items:center;gap:10px;color:#aab8cb;font-size:12px}.cache-bar button{background:#283747;color:#eaf0f8;border:1px solid #4d6076;border-radius:6px;padding:5px 9px;cursor:pointer}
+
+.metadata-card.text-only{display:flex;flex-direction:column}.metadata-card.text-only .reverse-picture{width:100%!important;height:58%!important;flex:none;align-items:center;justify-content:center}.metadata-card.text-only .reverse-panel{width:100%;height:42%;box-sizing:border-box;justify-content:center;overflow:visible}.metadata-card.text-only .metadata-actions{margin:auto 0;justify-content:center}.metadata-card.text-only .text-summary{padding:12px 18px;font-size:14px;line-height:1.55}.metadata-card.text-only .metadata-actions button{white-space:normal}
+
+/* Original favorites: dim only the image while the new high-resolution cache is pending. */
+.card.cache-waiting>img{filter:grayscale(1);opacity:.42;transition:filter .2s,opacity .2s}
+.card .cache-failure-label{position:absolute;left:45px;bottom:11px;z-index:5;color:#ff5c6c;background:#17191dcc;border-radius:4px;padding:2px 4px;font-size:11px;font-weight:700;line-height:16px;pointer-events:none}
+@media(max-width:760px){.card .cache-failure-label{left:49px;bottom:14px}}
+/* A quiet square prompt viewer, with the same subtle backdrop as the image viewer. */
+.prompt-dialog{box-sizing:border-box;width:min(76vw,76vh,720px);height:min(76vw,76vh,720px);max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);margin:auto;padding:0;overflow:hidden;color:#e4e9f2;background:#191d25f5;border:1px solid #536078;border-radius:14px;box-shadow:0 20px 55px #0009}
+.prompt-shade{position:fixed;inset:0;z-index:90;background:rgba(4,5,8,.18);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+.prompt-shade[hidden]{display:none}
+.prompt-dialog[open]{position:fixed;inset:0;z-index:91}
+.prompt-dialog-header{height:52px;box-sizing:border-box;padding:10px 12px 10px 18px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid #ffffff19;color:#e7eaf2;font-size:14px}
+.prompt-dialog-buttons{display:flex;align-items:center;gap:7px}
+.prompt-dialog-buttons button{border:1px solid #536078;background:#2b3443;color:#e7ecf6;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer}
+.prompt-dialog-buttons .prompt-save:disabled{opacity:.45;cursor:default}
+.prompt-dialog-buttons button:last-child{font-size:20px;line-height:19px;width:30px;height:30px;padding:3px}
+.prompt-dialog .prompt-dialog-text{display:block;box-sizing:border-box;width:100%;white-space:pre-wrap;overflow-wrap:anywhere;overflow-y:auto;height:calc(100% - 52px);padding:16px 20px 24px;font:13px/1.7 Inter,"Microsoft YaHei",system-ui,sans-serif;scrollbar-width:thin;color:#dce3ee;background:transparent;border:0;resize:none;outline:none}
+@media(max-width:760px){.prompt-dialog{width:min(calc(100vw - 24px),calc(100dvh - 24px));height:min(calc(100vw - 24px),calc(100dvh - 24px))}.prompt-dialog .prompt-dialog-text{padding:12px 14px;font-size:12px}}
+.reverse-card.pending-card.portrait .release-button{font-size:10px;white-space:normal;line-height:1.1}
+
+/* One bubble, two actions: copy directly or use the arrow to inspect. */
+.prompt-control{display:inline-flex;align-items:stretch;box-sizing:border-box;max-width:100%;min-width:0;overflow:hidden;flex:none;border:1px solid #657184;border-radius:8px;background:#262c38}
+.prompt-control[hidden]{display:none!important}
+.prompt-control>button{box-sizing:border-box;border:0;border-radius:0;background:transparent;color:#e4e9f2;cursor:pointer;white-space:nowrap}
+.prompt-control>button:disabled{opacity:.45;cursor:default}
+.prompt-control .copy-prompt{flex:1;min-width:0}
+.prompt-control .prompt-expand{flex:none;width:27px;padding:0;border-left:1px solid #657184;font-size:14px;line-height:1}
+.prompt-control>button:not(:disabled):hover{background:#394556}
+.reverse-card.pending-card .prompt-control{width:100%}
+.reverse-card.pending-card .prompt-control .copy-prompt{width:auto;flex:1;border:0;border-radius:0;background:transparent}
+.reverse-card.pending-card.portrait .prompt-control .copy-prompt{width:auto}
+.reverse-card.pending-card.portrait .prompt-control .copy-prompt::after{content:none}
+.metadata-card .metadata-actions .prompt-control{max-width:100%}
+.metadata-card .metadata-actions .prompt-expand{padding:0;width:24px}
+@media(max-width:760px){.reverse-card.pending-card.portrait .prompt-control .copy-prompt{font-size:10px;padding:4px 6px}.reverse-card.pending-card.portrait .prompt-control .prompt-expand{width:24px}}
+
+.prompt-dialog .prompt-dialog-text{user-select:text}.prompt-dialog .prompt-dialog-text:focus{outline:none}
+
+/* Fixed preview and editor columns; keep non-modal for browser translator popups. */
+.prompt-workspace{--side-size:clamp(210px,25vw,320px);--text-size:clamp(300px,33vw,430px);--dialog-height:min(70dvh,640px);position:fixed;inset:0;z-index:91;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.prompt-workspace[hidden]{display:none}
+.prompt-workspace .prompt-dialog[open]{position:relative;inset:auto;z-index:auto;margin:0;width:var(--text-size);height:var(--dialog-height);flex:none;pointer-events:auto;border-radius:0 14px 14px 0}
+.prompt-workspace.editing .prompt-dialog[open]{border-radius:0}
+.prompt-picture{box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:10px;width:var(--side-size);height:var(--dialog-height);min-width:0;padding:14px;background:#202632f5;color:#aabbd4;border:1px solid #536078;border-right:0;border-radius:14px 0 0 14px;box-shadow:0 20px 55px #0009;pointer-events:auto}
+.prompt-picture img{width:100%;min-height:0;max-height:100%;object-fit:contain}
+.prompt-picture span{font-size:13px;text-align:center;line-height:1.5}
+.prompt-picture.create{cursor:pointer}
+.prompt-picture.create img{max-height:72%}
+.prompt-picture .prompt-summary{box-sizing:border-box;width:100%;height:80px;flex:none;resize:vertical;padding:9px;border:1px solid #536078;border-radius:8px;background:#151b25;color:#e7ecf5;font:12px/1.5 Inter,"Microsoft YaHei",system-ui,sans-serif;cursor:text}
+.prompt-picture .prompt-summary[hidden]{display:none}
+.prompt-editor{box-sizing:border-box;display:flex;flex-direction:column;gap:10px;width:var(--side-size);height:var(--dialog-height);min-width:0;padding:15px;background:#202632f5;color:#e4e9f2;border:1px solid #536078;border-left:0;border-radius:0 14px 14px 0;box-shadow:0 20px 55px #0009;pointer-events:auto}
+.prompt-editor[hidden]{display:none}
+.prompt-editor strong{font-size:14px;flex:none}
+.prompt-edit-status{font-size:11px;color:#aabbd4;line-height:1.4;min-height:30px;flex:none}
+.prompt-editor textarea{box-sizing:border-box;width:100%;min-height:0;flex:1;resize:none;padding:10px;background:#151b25;color:#e7ecf5;border:1px solid #536078;border-radius:8px;font:12px/1.65 Inter,"Microsoft YaHei",system-ui,sans-serif;white-space:pre-wrap;outline:none}
+.prompt-editor textarea:focus{border-color:#8ba8d6}
+.prompt-editor textarea:disabled{opacity:.5}
+.prompt-apply{align-self:flex-end;flex:none;padding:8px 14px;border:1px solid #7894bc;border-radius:8px;background:#34465f;color:#f1f5fb;font-size:12px;cursor:pointer}
+.prompt-apply:hover:not(:disabled){background:#415c80}
+.prompt-apply:disabled{opacity:.5;cursor:default}
+@media(max-width:860px){
+ .prompt-workspace{--side-size:min(34vw,220px);--text-size:min(60vw,420px);--dialog-height:85dvh;flex-wrap:wrap;align-content:center}
+ .prompt-workspace .prompt-dialog[open]{height:52dvh;width:var(--text-size)}
+ .prompt-picture{height:52dvh}
+ .prompt-editor{width:min(calc(100vw - 20px),640px);height:30dvh;border:1px solid #536078;border-radius:14px;margin-top:6px}
+ .prompt-dialog-header{padding-left:10px;padding-right:8px;gap:4px}
+ .prompt-dialog-buttons{gap:4px;flex-wrap:wrap}
+ .prompt-dialog-buttons button{padding:5px 6px;font-size:11px}
+}
+@media(max-width:520px){
+ .prompt-workspace{--side-size:35vw;--text-size:calc(65vw - 20px)}
+ .prompt-picture{padding:7px}
+ .prompt-picture .prompt-summary{height:100px}
+ .prompt-dialog-header{height:auto;min-height:52px;align-items:flex-start;flex-direction:column}
+ .prompt-dialog .prompt-dialog-text{height:calc(100% - 96px)}
+}
+
+/* All prompt-bearing cards share a compact control surface, regardless of origin. */
+.reverse-card.worded-card .reverse-panel,.reverse-card:not(.pending-card) .reverse-panel{display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:8px;padding:10px 10px 38px;overflow:hidden}
+.reverse-card.worded-card .prompt-control,.reverse-card:not(.pending-card) .prompt-control{display:flex;width:100%;min-width:0;flex:none;border:1px solid #657184;background:#262c38;border-radius:8px;overflow:hidden}
+.reverse-card.worded-card .prompt-control button,.reverse-card:not(.pending-card) .prompt-control button{border:0;border-radius:0;background:transparent;white-space:nowrap;font-size:11px}
+.reverse-card.worded-card .prompt-control .copy-prompt,.reverse-card:not(.pending-card) .prompt-control .copy-prompt{flex:1;min-width:0;text-align:center;padding:6px 2px}
+.reverse-card.worded-card .prompt-control .prompt-expand,.reverse-card:not(.pending-card) .prompt-control .prompt-expand{width:25px;flex:none;border-left:1px solid #657184;padding:0}
+.worded-delete{position:absolute;right:7px;bottom:7px;z-index:9;border:1px solid #755257;border-radius:7px;padding:3px 7px;background:#36252a;color:#f1c4c9;font-size:10px;cursor:pointer}
+.worded-card.text-only .reverse-picture{width:100%!important;height:60%!important;justify-content:center;align-items:center}
+.worded-card.text-only .reverse-panel{width:100%;height:40%;box-sizing:border-box;padding-bottom:38px}
+.worded-card .worded-status{font-size:11px;color:#b6c6df;text-align:center}
+.prompt-dialog-header strong{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prompt-dialog-buttons{flex:none;flex-wrap:nowrap}
+.prompt-dialog-buttons button{white-space:nowrap;flex:none}
+@media(max-width:860px){.prompt-dialog-buttons{flex-wrap:nowrap}.prompt-dialog-header{flex-direction:row;align-items:center}}
+@media(max-width:520px){.prompt-dialog-header{height:52px;min-height:52px;flex-direction:row;align-items:center}.prompt-dialog .prompt-dialog-text{height:calc(100% - 52px)}.prompt-dialog-header strong{font-size:11px}.prompt-dialog-buttons button{font-size:10px;padding:4px 5px}}

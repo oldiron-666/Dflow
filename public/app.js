@@ -10,7 +10,7 @@ const FAVORITES_KEY = 'dflowFavoritesV1';
 const PREFERENCES_KEY = 'dflowPreferencesV1';
 const ratingNames = { g: '全年龄', s: '敏感', q: '较敏感', e: '成人' };
 const reversePresets = ['动作扩写', '艺术导演扩写', '随机', '巨构提示词', '瑶光真人', '通用扩写', '动漫专用'];
-const folderName = {original:'原始收藏', pending:'待反推', completed:'已完成', metadata:'元数据'};
+const folderName = {original:'原始收藏', pending:'待反推', worded:'有词区', completed:'已完成', metadata:'元数据库'};
 const postFolder = post => post.folder || (post.completed ? 'completed' : 'original');
 const state = { columns: [], heights: [] };
 const selectedPopularTags = new Set();
@@ -80,7 +80,7 @@ function resetColumns() {
   state.heights = [];
   const count = mode === 'favorites' && favoriteFolder === 'pending'
     ? Math.min(columnCount(), innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 2 : 4)
-    : mode === 'favorites' && favoriteFolder === 'metadata'
+    : (mode === 'favorites' && favoriteFolder === 'worded') || mode === 'metadata'
       ? Math.min(columnCount(), innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 2 : 4)
     : mode === 'favorites' && favoriteFolder === 'completed'
       ? Math.min(columnCount(), innerWidth <= 760 ? 2 : innerWidth <= 1100 ? 4 : 8)
@@ -261,6 +261,8 @@ function updateFavoriteCount() {
   if (completed) completed.textContent = items.filter(item => postFolder(item) === 'completed').length;
   const pending = document.querySelector('#pendingCount');
   if (pending) pending.textContent = items.filter(item => postFolder(item) === 'pending').length;
+  const worded = document.querySelector('#wordedCount');
+  if (worded) worded.textContent = items.filter(item => postFolder(item) === 'worded').length;
 }
 function updateFavoriteButtons(id) {
   const active = isFavorite(id);
@@ -275,12 +277,14 @@ function favoriteVisibleItems() {
   return readFavorites()
     .filter(item => postFolder(item) === favoriteFolder)
     .filter(favoriteMatches)
-    // 横向长方形优先显示在收藏页顶部；同类内部保持收藏顺序。
-    .sort((a, b) => Number((b.image_width || 0) > (b.image_height || 0)) - Number((a.image_width || 0) > (a.image_height || 0)));
+    .sort((a,b) => favoriteFolder === 'pending'
+      ? Number(a.autoEnabled === false) - Number(b.autoEnabled === false) ||
+        ((a.queueOrder || 999999) - (b.queueOrder || 999999))
+      : Number((b.image_width || 0) > (b.image_height || 0)) - Number((a.image_width || 0) > (a.image_height || 0)));
 }
 function refreshFavoriteGallery(preserveScroll = true) {
   if (mode !== 'favorites') return;
-  if (favoriteFolder === 'metadata') { loadMetadataGallery(); return; }
+  if (['worded','pending','completed'].includes(favoriteFolder)) { loadWordedGallery(preserveScroll); return; }
   const top = scrollY;
   const posts = favoriteVisibleItems();
   resetColumns();
@@ -433,8 +437,9 @@ async function load(reset = false) {
     resetColumns();
     scrollTo({ top: 0 });
   }
-  document.querySelector('#metadataUpload').hidden = mode !== 'favorites' || favoriteFolder !== 'metadata';
-  if (mode === 'favorites' && favoriteFolder === 'metadata') { await loadMetadataGallery(); return; }
+  document.querySelector('#metadataUpload').hidden = mode !== 'metadata';
+  if (mode === 'metadata') { await loadMetadataGallery(); return; }
+  if (mode === 'favorites' && ['worded','pending','completed'].includes(favoriteFolder)) { await loadWordedGallery(); return; }
   if (mode === 'favorites') {
     const posts = favoriteVisibleItems();
     currentPosts = posts.slice();
@@ -537,10 +542,14 @@ async function load(reset = false) {
     if (mode === 'favorites' && favoriteFolder !== 'original') { renderReverseCard(post); continue; }
     const card = document.createElement('article');
     card.className = 'card';
+    if (mode === 'favorites' && favoriteFolder === 'original') {
+      if (post.cacheStatus === 'error') card.classList.add('cache-failed');
+      else if (post.cacheStatus !== 'ready') card.classList.add('cache-waiting');
+    }
     const img = document.createElement('img');
     img.loading = 'lazy';
     img.decoding = 'async';
-    img.src = imageSrc(post.preview_file_url || post.large_file_url || post.file_url);
+    img.src = mode === 'favorites' && post.cacheStatus === 'ready' ? `/api/reverse/image/${post.id}` : imageSrc(post.preview_file_url || post.large_file_url || post.file_url);
     img.alt = `Danbooru #${post.id}`;
     img.addEventListener('load', () => { img.classList.add('loaded'); queueNextLoad(); });
     img.addEventListener('error', () => {
@@ -569,6 +578,11 @@ async function load(reset = false) {
       ai.className = 'ai-button'; ai.textContent = 'AI'; ai.title = '移到待反推';
       ai.onclick = event => { event.stopPropagation(); moveFavorite(post, 'pending'); };
       card.append(ai);
+      if (post.cacheStatus === 'error') {
+        const failure = document.createElement('span'); failure.className = 'cache-failure-label';
+        failure.textContent = '失败'; failure.title = post.cacheError || '高清缓存失败';
+        card.append(failure);
+      }
       completedButton = document.createElement('button');
       completedButton.className = 'completed-button';
       completedButton.dataset.completedId = post.id;
@@ -585,7 +599,8 @@ async function load(reset = false) {
       card.append(completedButton);
     }
     card.oncontextmenu = event => showMenu(event, post);
-    card.addEventListener('click', () => openLightbox(post, card));
+    card.addEventListener('click', () => openLightbox(post, card,
+      mode === 'favorites' && post.cacheStatus === 'ready' ? (img.currentSrc || img.src) : ''));
     const ratio = (post.image_height || 1) / (post.image_width || 1);
     const index = state.heights.indexOf(Math.min(...state.heights));
     state.columns[index].append(card);
@@ -614,23 +629,19 @@ function renderReverseCard(post) {
   if (width > height) picture.style.height = `${Math.min(imageShare, height / width * 100)}%`;
   else picture.style.width = `${Math.min(imageShare, width / height * 100)}%`;
   const panel = document.createElement('div'); panel.className = 'reverse-panel';
-  const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'copy-prompt'; copy.textContent = '复制提示词';
-  copy.disabled = !post.prompt;
+  const copy = createPromptControl(post.prompt, {kind:'favorite', id:post.id, imageUrl:post.cacheStatus === 'ready' ? `/api/reverse/image/${post.id}` : image.src, onSaved: value => { post.prompt = value; refreshFavoriteGallery(true); }});
   if (!pending && !post.prompt) copy.hidden = true;
-  copy.onclick = async () => {
-    try { await navigator.clipboard.writeText(post.prompt); toast('已复制提示词'); }
-    catch (error) { toast(`复制失败：${error.message}`); }
-  };
   if (pending) {
     card.classList.add('pending-card');
     const status = document.createElement('div'); status.className = 'reverse-status';
     const failed = post.reverseStatus === 'failed' || post.cacheStatus === 'error';
-    const done = Boolean(post.prompt) && !failed;
+    const done = Boolean(post.prompt) && !failed && post.autoEnabled === false;
     const lamp = document.createElement('span'); lamp.className = `reverse-lamp ${failed ? 'red' : done ? 'green' : ''}`;
     const label = document.createElement('span'); label.textContent = failed ? '错误' : done ? '完成' : '等待';
     status.title = post.cacheStatus === 'error' ? `缓存错误：${post.cacheError || '点击重试'}` :
       post.reverseStatus === 'failed' ? `反推错误：${post.reverseError || '点击重试'}` :
-      post.cacheStatus !== 'ready' ? '等待高清图缓存' : post.reverseStatus === 'processing' ? '正在反推' : label.textContent;
+      post.cacheStatus !== 'ready' ? '等待高清图缓存' : post.reverseStatus === 'processing' ? '正在反推（旧提示词已保留）' :
+      post.autoEnabled !== false && post.prompt ? '等待重新反推，旧提示词暂时保留' : label.textContent;
     if (failed) {
       status.classList.add('retryable'); status.setAttribute('role','button'); status.tabIndex = 0;
       status.setAttribute('aria-label', `${status.title}，点击重试`);
@@ -647,7 +658,8 @@ function renderReverseCard(post) {
     const queueButton = document.createElement('button'); queueButton.type = 'button'; queueButton.className = `queue-button ${post.autoEnabled !== false ? 'active' : ''}`;
     queueButton.textContent = post.autoEnabled !== false ? String(post.queueOrder || '·') : '+';
     queueButton.setAttribute('aria-pressed', String(post.autoEnabled !== false));
-    queueButton.title = post.autoEnabled !== false ? `队列第 ${post.queueOrder || '?'} 位，点击移出` : '点击加入反推队列';
+    queueButton.title = post.autoEnabled !== false ? `队列第 ${post.queueOrder || '?'} 位，点击移出` :
+      post.prompt ? '重新反推：成功后替换旧提示词，失败保留旧提示词' : '点击加入反推队列';
     queueButton.setAttribute('aria-label', queueButton.title);
     queueButton.onclick = async () => {
       queueButton.disabled = true;
@@ -655,7 +667,7 @@ function renderReverseCard(post) {
       catch(error) { queueButton.disabled = false; toast(`更新队列失败：${error.message}`); }
     };
     queue.append(queueLabel,queueButton);
-    const release = document.createElement('button'); release.type = 'button'; release.className = 'release-button'; release.textContent = '释放';
+    const release = document.createElement('button'); release.type = 'button'; release.className = 'release-button'; release.textContent = '释放至已完成';
     release.disabled = !post.prompt || post.cacheStatus !== 'ready';
     release.title = release.disabled ? '需先完成反推和高清缓存' : '释放到已完成';
     release.onclick = () => moveFavorite(post,'completed');
@@ -672,14 +684,14 @@ function renderReverseCard(post) {
     };
     const actions = document.createElement('div'); actions.className = 'reverse-actions';
     actions.append(status,queue,release);
-    panel.append(copy,actions,picker);
+    const instruction = document.createElement('input'); instruction.className='reverse-instruction';
+    instruction.type='text'; instruction.maxLength=4000; instruction.placeholder='额外要求（与预设一起交给 AI）';
+    instruction.setAttribute('aria-label','额外反推要求'); instruction.value=post.customInstruction || '';
+    instruction.onchange=async()=>{try{await patchFavorite(post.id,{customInstruction:instruction.value});toast('额外要求已保存');}
+      catch(error){toast('保存失败：'+error.message)}};
+    panel.append(copy,actions,picker,instruction);
   } else {
     panel.append(copy);
-    if (post.prompt) {
-      const view = document.createElement('button'); view.type = 'button'; view.className = 'view-prompt';
-      view.textContent = '查看提示词'; view.onclick = () => showPromptDialog(post.prompt);
-      panel.append(view);
-    }
   }
   card.append(picture,panel);
   const favoriteButton = document.createElement('button');
@@ -689,32 +701,356 @@ function renderReverseCard(post) {
   favoriteButton.onclick = event => { event.stopPropagation(); toggleFavorite(post); };
   const aiButton = document.createElement('button');
   aiButton.type = 'button'; aiButton.className = 'ai-button'; aiButton.textContent = 'AI';
-  aiButton.title = pending ? '移回原始收藏' : '移回待反推';
+  aiButton.title = pending ? '移回原始收藏' : '移回待反推重新反推';
   aiButton.setAttribute('aria-label', aiButton.title);
   aiButton.onclick = event => { event.stopPropagation(); moveFavorite(post, pending ? 'original' : 'pending'); };
   const completedButton = document.createElement('button');
   completedButton.type = 'button'; completedButton.className = `completed-button ${pending ? '' : 'active'}`;
-  completedButton.textContent = pending ? '○' : '✓';
-  completedButton.title = pending ? '释放到已完成（需先生成提示词）' : '取消完成，移回原始收藏';
+  completedButton.textContent = favoriteFolder === 'completed' ? '✓' : '○';
+  completedButton.title = favoriteFolder === 'completed' ? '取消完成，移回原始收藏' : '释放到已完成';
   completedButton.setAttribute('aria-label', completedButton.title);
-  completedButton.disabled = pending && (!post.prompt || post.cacheStatus !== 'ready');
-  completedButton.onclick = event => { event.stopPropagation(); moveFavorite(post, pending ? 'completed' : 'original'); };
+  completedButton.disabled = favoriteFolder !== 'completed' && (!post.prompt || post.cacheStatus !== 'ready');
+  completedButton.onclick = event => { event.stopPropagation(); moveFavorite(post, favoriteFolder === 'completed' ? 'original' : 'completed'); };
   picture.append(favoriteButton, aiButton, completedButton);
+  if(favoriteFolder==='worded') {
+    const remove=document.createElement('button');remove.className='worded-delete';remove.textContent='删除';remove.title='删除本地收藏及缓存';
+    remove.onclick=event=>{event.stopPropagation();if(confirm('删除此本地收藏及缓存？'))toggleFavorite(post)};card.append(remove);
+  }
+  card.oncontextmenu=event=>showMenu(event,post);
   const index = state.heights.indexOf(Math.min(...state.heights));
   state.columns[index].append(card); state.heights[index] += 1;
 }
-function showPromptDialog(prompt) {
+function createPromptControl(initialPrompt, target) {
+  let prompt = initialPrompt;
+  const control = document.createElement('div'); control.className = 'prompt-control';
+  const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'copy-prompt';
+  copy.textContent = '复制提示词'; copy.title = '复制提示词'; copy.disabled = !prompt;
+  copy.onclick = async event => {
+    event.stopPropagation();
+    try { await navigator.clipboard.writeText(prompt); toast('已复制提示词'); }
+    catch (error) { toast(`复制失败：${error.message}`); }
+  };
+  const expand = document.createElement('button'); expand.type = 'button'; expand.className = 'prompt-expand';
+  expand.textContent = '▾'; expand.title = '展开查看提示词'; expand.setAttribute('aria-label', expand.title);
+  expand.disabled = !prompt && target.kind !== 'favorite';
+  if (!prompt) expand.title = '手动写入提示词';
+  expand.onclick = event => {
+    event.stopPropagation();
+    showPromptDialog(prompt, target, value => {
+      prompt = value;
+      target.onSaved(value);
+    });
+  };
+  control.append(copy, expand);
+  return control;
+}
+async function translatePrompt(text, direction, signal) {
+  const response = await fetch('/api/translate', {
+    method:'POST', headers:{'Content-Type':'application/json'}, signal,
+    body:JSON.stringify({text,direction})
+  });
+  const data = await response.json();
+  if (!response.ok) throw Error(data.error || `HTTP ${response.status}`);
+  if (!data.text?.trim()) throw Error('翻译结果为空');
+  return data.text;
+}
+// Keep an English/Chinese pair for each short passage. Only changed passages are retranslated.
+function promptPassages(prompt) {
+  const parts = prompt.match(/[^,;.!?\n，。！？；]+(?:[,;.!?，。！？；]+)?[ \t]*|\n+/g) || [prompt];
+  const result = []; let pending = '';
+  for (const part of parts) {
+    if (pending && pending.length + part.length > 720) { result.push(pending); pending = ''; }
+    pending += part;
+  }
+  if (pending) result.push(pending);
+  return result.join('') === prompt ? result : [prompt];
+}
+async function translatePassages(parts, signal) {
+  const response = await fetch('/api/translate-segments', {
+    method:'POST', headers:{'Content-Type':'application/json'}, signal,
+    body:JSON.stringify({segments:parts, direction:'en-zh'})
+  });
+  const data = await response.json();
+  if (!response.ok) throw Error(data.error || `HTTP ${response.status}`);
+  if (!Array.isArray(data.segments) || data.segments.length !== parts.length ||
+    data.segments.some((value, i) => typeof value !== 'string' || (parts[i].trim() && !value.trim()))) {
+    throw Error('翻译片段无效');
+  }
+  return data.segments;
+}
+function changedPassage(session, edited) {
+  const old = session.passages.map(part => part.chinese).join('');
+  if (old === edited) return null;
+  let prefix = 0;
+  while (prefix < old.length && prefix < edited.length && old[prefix] === edited[prefix]) prefix++;
+  let suffix = 0;
+  while (suffix < old.length - prefix && suffix < edited.length - prefix &&
+    old[old.length - 1 - suffix] === edited[edited.length - 1 - suffix]) suffix++;
+  const end = old.length - suffix;
+  let offset = 0, first = -1, last = -1, spanStart = 0, spanEnd = 0;
+  session.passages.forEach((part, index) => {
+    const next = offset + part.chinese.length;
+    // For an insertion exactly between passages, include the passage on the left.
+    if (first < 0 && (next > prefix || (prefix === end && next === prefix))) {
+      first = index; spanStart = offset;
+    }
+    if (first >= 0 && (offset < end || (prefix === end && offset < prefix))) {
+      last = index; spanEnd = next;
+    }
+    offset = next;
+  });
+  if (first < 0) { first = session.passages.length - 1; spanStart = old.length - session.passages[first].chinese.length; }
+  if (last < first) { last = first; spanEnd = spanStart + session.passages[first].chinese.length; }
+  const changedChinese = edited.slice(spanStart, edited.length - (old.length - spanEnd));
+  return {first,last,changedChinese};
+}
+async function persistEditedPrompt(target, prompt) {
+  if (target.kind === 'favorite') {
+    await patchFavorite(target.id, {prompt});
+  } else {
+    const response = await fetch(`/api/${target.kind === 'worded' ? 'worded' : 'metadata'}/entries/${encodeURIComponent(target.id)}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt})
+    });
+    const result = await response.json();
+    if (!response.ok) throw Error(result.error || `HTTP ${response.status}`);
+  }
+}
+function showPromptDialog(prompt, target, onSaved) {
   let dialog = document.querySelector('#promptDialog');
   if (!dialog) {
+    const shade = document.createElement('div'); shade.className = 'prompt-shade'; shade.hidden = true;
+    const workspace = document.createElement('div'); workspace.className = 'prompt-workspace'; workspace.hidden = true;
     dialog = document.createElement('dialog'); dialog.id = 'promptDialog'; dialog.className = 'prompt-dialog';
-    const close = document.createElement('button'); close.type = 'button'; close.textContent = '关闭';
-    close.onclick = () => dialog.close();
-    const text = document.createElement('pre'); text.className = 'prompt-dialog-text';
-    dialog.append(close,text); document.body.append(dialog);
-    dialog.onclick = event => { if (event.target === dialog) dialog.close(); };
+    dialog.setAttribute('aria-modal', 'false');
+    shade.onclick = () => dialog.close();
+    dialog.addEventListener('close', () => {
+      const session = dialog.promptSession;
+      shade.hidden = true; workspace.hidden = true;
+      workspace.classList.remove('editing');
+      workspace.querySelector('.prompt-editor').hidden = true;
+      if (session?.objectUrl) URL.revokeObjectURL(session.objectUrl);
+    });
+    dialog.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); dialog.close(); }
+    });
+    const header = document.createElement('div'); header.className = 'prompt-dialog-header';
+    const title = document.createElement('strong'); title.textContent = '提示词';
+    const buttons = document.createElement('div'); buttons.className = 'prompt-dialog-buttons';
+    const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = '复制提示词';
+    copy.onclick = async () => {
+      try { await navigator.clipboard.writeText(dialog.querySelector('.prompt-dialog-text').value); toast('已复制提示词'); }
+      catch (error) { toast(`复制失败：${error.message}`); }
+    };
+    const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = '修改提示词';
+    edit.onclick = async () => {
+      const session = dialog.promptSession;
+      const version = session.version;
+      const panel = workspace.querySelector('.prompt-editor');
+      if (!panel.hidden) { panel.querySelector('textarea').focus(); return; }
+      panel.hidden = false; workspace.classList.add('editing');
+      const input = panel.querySelector('textarea');
+      const status = panel.querySelector('.prompt-edit-status');
+      const apply = panel.querySelector('.prompt-apply');
+      input.disabled = true; apply.disabled = true; input.value = '';
+      status.textContent = '正在翻译当前提示词，建立中英文片段对应关系…';
+      try {
+        const english = promptPassages(session.prompt);
+        const chinese = await translatePassages(english);
+        if (dialog.promptSession !== session || !dialog.open || panel.hidden || session.version !== version) return;
+        session.passages = english.map((value, index) => ({english:value, chinese:chinese[index]}));
+        input.value = chinese.join(''); input.disabled = false; apply.disabled = false;
+        status.textContent = '修改中文后，点击「修正翻译」；未改动的英文保持原样';
+        input.focus();
+      } catch (error) {
+        if (dialog.promptSession !== session || !dialog.open || panel.hidden || session.version !== version) return;
+        status.textContent = `翻译失败：${error.message}。关闭后重新打开可重试。`;
+      }
+    };
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = '×';
+    close.title = '关闭'; close.setAttribute('aria-label', '关闭提示词'); close.onclick = () => dialog.close();
+    const save = document.createElement('button'); save.type = 'button'; save.className = 'prompt-save';
+    save.textContent = '保存修改'; save.disabled = true;
+    save.onclick = async () => {
+      const session = dialog.promptSession;
+      if (!session || session.busy) return;
+      const value = text.value;
+      const wasEmptyPending = session.target.kind === 'favorite' && !session.prompt;
+      if (!value.trim()) { toast('提示词不能为空'); return; }
+      if (!['create','fromPost','moveWorded'].includes(session.target.kind) && value === session.prompt && !session.imageFile) { save.disabled = true; return; }
+      session.busy = true; save.disabled = true; save.textContent = '保存中…';
+      try {
+        if (session.target.kind === 'moveWorded') {
+          if(session.imageFile)await uploadWordedImage(session.target.id,session.imageFile);
+          if(value!==session.prompt)await persistEditedPrompt({kind:'worded',id:session.target.id},value);
+          const response=await fetch(`/api/worded/state/${encodeURIComponent(session.target.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:'worded'})});
+          if(!response.ok)throw Error((await response.json()).error||`HTTP ${response.status}`);
+          dialog.close();mode='favorites';favoriteFolder='worded';activateButton(document.querySelector('[data-mode="favorites"]'));
+          document.querySelectorAll('#favoriteFolders [data-folder]').forEach(b=>b.classList.toggle('active',b.dataset.folder==='worded'));
+          loadWordedGallery(false);toast('已移至有词区');return;
+        }
+        if (session.target.kind === 'fromPost') {
+          const post=session.target.post;
+          if(!isFavorite(post.id)) await saveFavorites([favoriteFields(post),...readFavorites()]);
+          if(session.imageFile)await uploadFavoriteImage(post.id,session.imageFile);
+          await patchFavorite(post.id,{prompt:value,folder:'worded'});
+          dialog.close();favoriteFolder='worded';
+          document.querySelectorAll('#favoriteFolders [data-folder]').forEach(b=>b.classList.toggle('active',b.dataset.folder==='worded'));
+          mode='favorites';activateButton(document.querySelector('[data-mode="favorites"]'));refreshFavoriteGallery(false);toast('已收藏并移至有词区');return;
+        }
+        if (session.target.kind === 'create') {
+          const summaryValue = workspace.querySelector('.prompt-summary').value.trim();
+          if (!session.imageFile && !summaryValue) throw Error('请粘贴/拖入图片，或填写提示词概述');
+          const response=await fetch('/api/worded/entries',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({prompt:value,summary:summaryValue,hasImage:Boolean(session.imageFile)})});
+          const created=await response.json(); if(!response.ok)throw Error(created.error || `HTTP ${response.status}`);
+          if(session.imageFile) {
+            try { await uploadWordedImage(created.id,session.imageFile); }
+            catch(error) { await fetch(`/api/worded/entries/${encodeURIComponent(created.id)}`,{method:'DELETE'}); throw error; }
+          }
+          dialog.close(); favoriteFolder='worded';
+          document.querySelectorAll('#favoriteFolders [data-folder]').forEach(b=>b.classList.toggle('active',b.dataset.folder==='worded'));
+          refreshFavoriteGallery(false);
+          toast('卡片已保存到有词区'); return;
+        }
+        if(session.imageFile) {
+          if(session.target.kind==='favorite')await uploadFavoriteImage(session.target.id,session.imageFile);
+          else if(session.target.kind==='worded')await uploadWordedImage(session.target.id,session.imageFile);
+          else throw Error('元数据图片不能替换');
+        }
+        if(value!==session.prompt)await persistEditedPrompt(session.target, value);
+        session.prompt = value; session.onSaved(value); session.passages = null; session.version++;session.imageFile=null;
+        if(session.target.kind==='worded')loadWordedGallery(true);else if(session.target.kind==='favorite')refreshFavoriteGallery(true);
+        if (wasEmptyPending) { dialog.close(); toast('提示词已保存，图片已移至有词区'); return; }
+        const panel = workspace.querySelector('.prompt-editor');
+        panel.hidden = true; workspace.classList.remove('editing');
+        toast('提示词已保存');
+      } catch (error) {
+        toast(`保存失败：${error.message}`);
+      } finally {
+        session.busy = false; save.textContent = '保存修改';
+        save.disabled = !text.value.trim() || (!['create','fromPost','moveWorded'].includes(session.target.kind) && text.value === session.prompt && !session.imageFile);
+      }
+    };
+    buttons.append(copy,edit,save,close); header.append(title,buttons);
+    const text = document.createElement('textarea'); text.className = 'prompt-dialog-text';
+    text.setAttribute('spellcheck', 'false');
+    text.addEventListener('input', () => { save.disabled = !text.value.trim() || (!['create','fromPost','moveWorded'].includes(dialog.promptSession?.target.kind) && text.value === dialog.promptSession?.prompt && !dialog.promptSession?.imageFile); });
+    text.tabIndex = 0;
+    text.setAttribute('aria-label', '提示词内容');
+    text.addEventListener('keydown', event => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault(); save.click();
+      }
+    });
+    const panel = document.createElement('section'); panel.className = 'prompt-editor'; panel.hidden = true;
+    const panelTitle = document.createElement('strong'); panelTitle.textContent = '中文修改区';
+    const status = document.createElement('div'); status.className = 'prompt-edit-status'; status.setAttribute('role','status');
+    const input = document.createElement('textarea'); input.setAttribute('aria-label','修改提示词中文内容');
+    input.placeholder = '在这里修改中文提示词，点击「修正翻译」才会翻译并保存';
+    input.addEventListener('input', () => {
+      if (dialog.promptSession?.passages) {
+        apply.disabled = dialog.promptSession.busy;
+        status.textContent = '尚未保存；点击「修正翻译」仅更新改动的片段';
+      }
+    });
+    const apply = document.createElement('button'); apply.type = 'button'; apply.className = 'prompt-apply';
+    apply.textContent = '修正翻译'; apply.disabled = true;
+    apply.onclick = () => dialog.promptSession?.sync();
+    panel.append(panelTitle,status,input,apply);
+    const picture = document.createElement('aside'); picture.className = 'prompt-picture';
+    const preview = document.createElement('img'); preview.alt = '卡片图片预览';
+    const placeholder = document.createElement('span'); placeholder.textContent = '第二步：粘贴或拖入图片，也可点此选取';
+    const summary = document.createElement('textarea'); summary.className = 'prompt-summary';
+    summary.placeholder = '无图时填写提示词概述（也可直接粘贴文字）'; summary.setAttribute('aria-label','图片或提示词概述');
+    const chooser = document.createElement('input'); chooser.type='file'; chooser.accept='image/png,image/jpeg,image/webp'; chooser.hidden=true;
+    const setImage = file => {
+      if (!file || !['image/png','image/jpeg','image/webp'].includes(file.type)) { toast('仅支持 PNG、JPEG、WebP 图片'); return; }
+      const session = dialog.promptSession;
+      if (session.objectUrl) URL.revokeObjectURL(session.objectUrl);
+      session.imageFile=file; session.objectUrl=URL.createObjectURL(file);
+      preview.src=session.objectUrl; preview.hidden=false; placeholder.hidden=true;
+      save.disabled = !text.value.trim();
+    };
+    chooser.onchange=()=>{if(chooser.files[0])setImage(chooser.files[0]);chooser.value='';};
+    picture.onclick=e=>{if(e.target!==summary)chooser.click();};
+    picture.ondragover=e=>{if(e.dataTransfer?.types.includes('Files'))e.preventDefault();};
+    picture.ondrop=e=>{e.preventDefault();e.stopPropagation();setImage([...e.dataTransfer.files].find(x=>x.type.startsWith('image/')));};
+    workspace.addEventListener('paste', e=>{
+      if (!dialog.open || !dialog.promptSession || dialog.promptSession.target.kind === 'metadata') return;
+      const file=[...e.clipboardData.items].find(x=>x.type.startsWith('image/'))?.getAsFile();
+      if(file){e.preventDefault();setImage(file);}
+    });
+    picture.append(preview,placeholder,summary,chooser);
+    dialog.append(header,text); workspace.append(picture,dialog,panel); document.body.append(shade,workspace);
   }
-  dialog.querySelector('.prompt-dialog-text').textContent = prompt;
-  dialog.showModal();
+  if (dialog.open) dialog.close();
+  const workspace = dialog.closest('.prompt-workspace');
+  const panel = workspace.querySelector('.prompt-editor');
+  panel.hidden = true; workspace.classList.remove('editing');
+  const session = {prompt:prompt || '', target, onSaved:onSaved || (()=>{}), passages:null, busy:false, version:0,
+    imageFile:target.imageFile || null, objectUrl:null};
+  const picture = workspace.querySelector('.prompt-picture');
+  const preview = picture.querySelector('img');
+  const summary = picture.querySelector('.prompt-summary');
+  summary.value = target.summary || '';
+  summary.hidden = target.kind !== 'create';
+  picture.classList.toggle('create', target.kind !== 'metadata');
+  if (session.imageFile) { session.objectUrl=URL.createObjectURL(session.imageFile); preview.src=session.objectUrl; }
+  else preview.src=target.imageUrl || '';
+  preview.hidden = !Boolean(session.imageFile || target.imageUrl);
+  picture.querySelector('span').hidden = !preview.hidden;
+  dialog.querySelector('.prompt-dialog-header strong').textContent = target.kind === 'create' ? '手写提示词' : ['fromPost','moveWorded'].includes(target.kind) ? '创建提示词卡片' : '提示词';
+  dialog.querySelector('.prompt-dialog-buttons button:first-child').hidden = ['create','fromPost','moveWorded'].includes(target.kind);
+  dialog.querySelector('.prompt-dialog-buttons button:nth-child(2)').hidden = ['create','fromPost','moveWorded'].includes(target.kind);
+  dialog.querySelector('.prompt-dialog-buttons button:nth-child(3)').textContent = ['create','fromPost','moveWorded'].includes(target.kind) ? '创建卡片' : '保存修改';
+  session.sync = async () => {
+    const input = panel.querySelector('textarea');
+    const status = panel.querySelector('.prompt-edit-status');
+    const apply = panel.querySelector('.prompt-apply');
+    if (!session.passages || session.busy) return;
+    const edited = input.value;
+    if (!edited.trim()) { status.textContent = '提示词不能为空，尚未保存'; return; }
+    const change = changedPassage(session, edited);
+    if (!change) { status.textContent = '没有改动，无需翻译'; return; }
+    session.busy = true; input.disabled = true; apply.disabled = true;
+    status.textContent = '正在翻译改动的片段…';
+    try {
+      let translated = change.changedChinese.trim()
+        ? await translatePrompt(change.changedChinese, 'zh-en') : change.changedChinese;
+      const oldEnglish = session.passages.slice(change.first, change.last + 1)
+        .map(part => part.english).join('');
+      // Google often trims whitespace. Retain the existing English passage's edge spacing
+      // so a corrected sentence does not get glued to its unchanged neighbors.
+      const leading = oldEnglish.match(/^[ \t\n]+/)?.[0] || '';
+      const trailing = oldEnglish.match(/[ \t\n]+$/)?.[0] || '';
+      if (leading && !/^[ \t\n]/.test(translated)) translated = leading + translated;
+      if (trailing && !/[ \t\n]$/.test(translated)) translated += trailing;
+      const next = session.passages.slice();
+      next.splice(change.first, change.last - change.first + 1,
+        {chinese:change.changedChinese, english:translated});
+      const english = next.map(part => part.english).join('');
+      status.textContent = '正在保存…';
+      await persistEditedPrompt(target, english);
+      session.passages = next; session.prompt = english; onSaved(english);
+      if (dialog.promptSession === session) {
+        dialog.querySelector('.prompt-dialog-text').value = english;
+        dialog.querySelector('.prompt-save').disabled = true;
+        status.textContent = '已保存；未修改片段的英文保持原样';
+      }
+    } catch (error) {
+      if (dialog.promptSession === session) status.textContent = `翻译/保存失败：${error.message}，可再次点击重试`;
+    } finally {
+      session.busy = false;
+      if (dialog.promptSession === session) { input.disabled = false; apply.disabled = false; }
+    }
+  };
+  dialog.promptSession = session;
+  dialog.querySelector('.prompt-dialog-text').value = prompt || '';
+  dialog.querySelector('.prompt-save').disabled = !['create','fromPost','moveWorded'].includes(target.kind) || (target.kind === 'moveWorded' && !prompt?.trim());
+  workspace.hidden = false;
+  document.querySelector('.prompt-shade').hidden = false;
+  if (!dialog.open) dialog.show(); // Non-modal so translation extensions can render above the viewer.
+  dialog.querySelector('.prompt-dialog-text').scrollTop = 0;
 }
 function openLightbox(post, card, imageUrl = '') {
   previewPost = post;
@@ -757,9 +1093,9 @@ lightbox.addEventListener('click', event => {
 let resizeGalleryTimer = 0;
 window.addEventListener('resize', () => {
   if (!lightbox.classList.contains('hidden') && previewPost) placeLightbox(previewCard, previewPost);
-  if (mode === 'favorites' && ['pending','metadata'].includes(favoriteFolder)) {
+  if (mode === 'metadata' || (mode === 'favorites' && ['pending','worded'].includes(favoriteFolder))) {
     clearTimeout(resizeGalleryTimer);
-    resizeGalleryTimer = setTimeout(() => refreshFavoriteGallery(true), 150);
+    resizeGalleryTimer = setTimeout(() => mode === 'metadata' ? loadMetadataGallery() : refreshFavoriteGallery(true), 150);
   }
 });
 document.addEventListener('keydown', event => {
@@ -769,9 +1105,18 @@ document.addEventListener('keydown', event => {
     undoLastAction();
   }
 });
+let activeManual = null;
+function showManualMenu(event, item) {
+  event.preventDefault();activePost=null;activeManual=item;
+  menu.querySelectorAll('[data-action]').forEach(button=>button.hidden=button.dataset.action!=='create-prompt');
+  menu.classList.remove('hidden');
+  menu.style.left=`${Math.min(event.clientX,innerWidth-205)}px`;
+  menu.style.top=`${Math.min(event.clientY,innerHeight-190)}px`;
+}
 function showMenu(event, post) {
   event.preventDefault();
-  activePost = post;
+  activePost = post; activeManual = null;
+  menu.querySelectorAll('[data-action]').forEach(button=>button.hidden=false);
   menu.querySelector('[data-action="favorite"]').textContent = isFavorite(post.id) ? '取消本地收藏' : '加入本地收藏';
   menu.classList.remove('hidden');
   menu.style.left = `${Math.min(event.clientX, innerWidth - 205)}px`;
@@ -790,11 +1135,12 @@ async function blobAsPng(blob) {
 }
 async function copyImage(post) {
   toast('正在准备高清图片…');
-  const urls = [...new Set([post.large_file_url, post.file_url, post.preview_file_url].filter(Boolean))];
+  const cached = isFavorite(post.id) && readFavorites().find(item => String(item.id) === String(post.id))?.cacheStatus === 'ready';
+  const urls = [...new Set([cached ? `/api/reverse/image/${post.id}` : '', post.large_file_url, post.file_url, post.preview_file_url].filter(Boolean))];
   let lastError;
   for (const url of urls) {
     try {
-      const response = await fetch(`/api/image?url=${encodeURIComponent(url)}`);
+      const response = await fetch(url.startsWith('/api/reverse/image/') ? url : `/api/image?url=${encodeURIComponent(url)}`);
       if (!response.ok) throw Error(`图片下载失败 (${response.status})`);
       const png = await blobAsPng(await response.blob());
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
@@ -806,10 +1152,14 @@ async function copyImage(post) {
 }
 menu.onclick = async event => {
   const action = event.target.dataset.action;
-  if (!action || !activePost) return;
+  if (!action || (!activePost && !activeManual)) return;
   menu.classList.add('hidden');
   try {
-    if (action === 'favorite') await toggleFavorite(activePost);
+    if (action === 'favorite' && activePost) await toggleFavorite(activePost);
+    if (action === 'create-prompt') {
+      if(activeManual)showPromptDialog(activeManual.positive,{kind:'moveWorded',id:activeManual.id,imageUrl:activeManual.imageExt?`/api/worded/images/${encodeURIComponent(activeManual.id)}`:'',summary:activeManual.summary});
+      else {const saved=readFavorites().find(item=>String(item.id)===String(activePost.id));showPromptDialog(saved?.prompt||'',{kind:'fromPost',post:activePost,imageUrl:saved?.cacheStatus==='ready'?`/api/reverse/image/${activePost.id}`:imageSrc(activePost.large_file_url||activePost.preview_file_url)});}
+    }
     if (action === 'copy') await copyImage(activePost);
     if (action === 'url') { await navigator.clipboard.writeText(hiRes(activePost)); toast('已复制高清图地址'); }
     if (action === 'open') open(`/api/image?url=${encodeURIComponent(hiRes(activePost))}`, '_blank', 'noopener');
@@ -882,7 +1232,7 @@ function selectMode(nextMode, button) {
   activateButton(button || document.querySelector(`[data-mode="${nextMode}"]`));
   document.querySelector('#favoriteFolders')?.classList.toggle('hidden', nextMode !== 'favorites');
   schedulePreferenceSave();
-  if (nextMode === 'favorites' && favoriteFolder === 'metadata') load(true);
+  if (nextMode === 'metadata' || (nextMode === 'favorites' && favoriteFolder === 'worded')) load(true);
   else if (!restoreView(nextMode)) load(true);
 }
 document.querySelectorAll('.mode[data-mode]').forEach(button => button.onclick = () => selectMode(button.dataset.mode, button));
@@ -911,7 +1261,7 @@ document.querySelectorAll('#favoriteFolders [data-folder]').forEach(button => bu
   if (mode === 'favorites') saveCurrentView();
   favoriteFolder = button.dataset.folder;
   document.querySelectorAll('#favoriteFolders [data-folder]').forEach(item => item.classList.toggle('active', item === button));
-  if (mode === 'favorites' && favoriteFolder === 'metadata') { load(true); return; }
+  if (mode === 'favorites' && ['worded','pending','completed'].includes(favoriteFolder)) { load(true); return; }
   if (mode === 'favorites' && !restoreView('favorites')) refreshFavoriteGallery(false);
 });
 document.querySelector('#searchBtn').onclick = () => { manualSearchTags = normalizeSearchTags(searchInput.value); searchInput.value = manualSearchTags; schedulePreferenceSave(); load(true); };
@@ -964,7 +1314,7 @@ document.querySelector('#saveSettings').onclick = async () => {
   try {
     const response = await fetch('/api/account', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ loginName: localStorage.loginName, loginKey: localStorage.loginKey })
+      body: JSON.stringify({ loginName: localStorage.loginName, loginKey: localStorage.loginKey, googleTranslateKey: localStorage.googleTranslateKey })
     });
     if (!response.ok) throw Error(`HTTP ${response.status}`);
     const result = await response.json();
@@ -1094,14 +1444,12 @@ async function initializeSharedState() {
     } else if (localFavorites.length) {
       await saveFavorites(localFavorites);
     }
-    if (remote.account?.loginName && remote.account?.loginKey) {
-      localStorage.loginName = remote.account.loginName;
-      localStorage.loginKey = remote.account.loginKey;
-    } else if (localStorage.loginName && localStorage.loginKey) {
-      await fetch('/api/account', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ loginName: localStorage.loginName, loginKey: localStorage.loginKey })
-      });
+    if (remote.account && (remote.account.loginName || remote.account.loginKey || remote.account.googleTranslateKey)) {
+      if (remote.account.loginName) localStorage.loginName = remote.account.loginName;
+      if (remote.account.loginKey) localStorage.loginKey = remote.account.loginKey;
+      if (remote.account.googleTranslateKey) localStorage.googleTranslateKey = remote.account.googleTranslateKey;
+    } else if (localStorage.loginName || localStorage.loginKey || localStorage.googleTranslateKey) {
+      await fetch('/api/account', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginName: localStorage.loginName || '', loginKey: localStorage.loginKey || '', googleTranslateKey: localStorage.googleTranslateKey || '' }) });
     }
     applyPreferences(remote.updatedAt ? remote.preferences : localPreferences);
   } catch {
@@ -1130,6 +1478,7 @@ async function pullSharedFavorites() {
       updateFavoriteCount();
       document.querySelectorAll('[data-favorite-id]').forEach(button => updateFavoriteButtons(button.dataset.favoriteId));
       if (changed && mode === 'favorites') refreshFavoriteGallery(true);
+      if(mode === 'metadata') loadMetadataGallery();
     }
     if (remote.account?.loginName && remote.account?.loginKey) {
       localStorage.loginName = remote.account.loginName;
@@ -1159,49 +1508,167 @@ setInterval(pullSharedFavorites, 10000);
 
 // Imported ComfyUI PNGs are stored separately from Danbooru favorites.
 async function loadMetadataGallery() {
-  if (mode !== 'favorites' || favoriteFolder !== 'metadata') return;
+  if (mode !== 'metadata') return;
   const upload = document.querySelector('#metadataUpload');
   upload.hidden = false;
   try {
     const res = await fetch('/api/metadata/images');
     if (!res.ok) throw Error(`HTTP ${res.status}`);
     const items = await res.json();
-    if (mode !== 'favorites' || favoriteFolder !== 'metadata') return;
+    if (mode !== 'metadata') return;
     resetColumns();
     gallery.classList.add('reverse-gallery');
     for (const item of items) renderMetadataCard(item);
-    statusEl.textContent = items.length ? `已识别 ${items.length} 张元数据图片` : '上传带 ComfyUI 元数据的 PNG 图片';
+    statusEl.textContent = items.length ? `元数据库 ${items.length} 条` : '可导入 ComfyUI PNG 或手写提示词';
   } catch (error) { statusEl.textContent = `读取元数据失败：${error.message}`; }
   ended = true; sentinel.classList.remove('loading'); sentinel.classList.add('done');
 }
-function renderMetadataCard(item) {
+async function loadWordedGallery(preserveScroll = false) {
+  if (mode !== 'favorites' || !['worded','pending','completed'].includes(favoriteFolder)) return;
+  const top = scrollY;
+  try {
+    const res = await fetch('/api/worded/entries', {cache:'no-store'});
+    if (!res.ok) throw Error('HTTP ' + res.status);
+    const entries = await res.json();
+    if (mode !== 'favorites' || !['worded','pending','completed'].includes(favoriteFolder)) return;
+    const posts = favoriteVisibleItems();
+    const visible = entries.filter(item => (item.folder || 'worded') === favoriteFolder);
+    resetColumns(); currentPosts = posts.slice();
+    if (favoriteFolder === 'worded') {
+      const rows = [
+        ...posts.map(value => ({kind:'favorite', value, landscape:Number(value.image_width||0)>Number(value.image_height||0), at:value.wordedAt || value.created_at || '', index:0})),
+        ...visible.map(value => ({kind:'entry', value, landscape:Number(value.width||0)>Number(value.height||0), at:value.createdAt || value.updatedAt || '', index:0}))
+      ];
+      rows.forEach((row,index) => row.index=index);
+      rows.sort((a,b) => Number(b.landscape)-Number(a.landscape) || (Date.parse(b.at||'')||0)-(Date.parse(a.at||'')||0) || a.index-b.index);
+      for (const row of rows) row.kind === 'favorite' ? renderReverseCard(row.value) : renderWordedCard(row.value);
+    } else {
+      render(posts); for (const item of visible) renderWordedCard(item);
+    }
+    statusEl.textContent = folderName[favoriteFolder] + ' ' + (posts.length + visible.length) + ' 张';
+    const count = document.querySelector('#wordedCount'); if (count) count.textContent = entries.filter(item=>(item.folder||'worded')==='worded').length + readFavorites().filter(item=>postFolder(item)==='worded').length;
+    ended = true; sentinel.classList.remove('loading'); sentinel.classList.add('done');
+    if (preserveScroll) requestAnimationFrame(() => scrollTo({top}));
+  } catch (error) { statusEl.textContent = '读取有词区失败：' + error.message; }
+}
+async function changeWordedFolder(item,folder){
+  try{
+    const response=await fetch(`/api/worded/state/${encodeURIComponent(item.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder})});
+    const data=await response.json();if(!response.ok)throw Error(data.error||`HTTP ${response.status}`);
+    loadWordedGallery(true);
+  }catch(error){toast(`移动失败：${error.message}`)}
+}
+function renderWordedCard(item){
+  const card=document.createElement('article');
+  card.className=`reverse-card worded-card ${item.imageExt?item.width>item.height?'landscape':'portrait':'text-only'}`;
+  const picture=document.createElement('div');picture.className='reverse-picture';
+  const url=item.imageExt?`/api/worded/images/${encodeURIComponent(item.id)}?v=${encodeURIComponent(item.imageExt)}`:'';
+  if(item.imageExt){
+    const img=document.createElement('img');img.loading='lazy';img.src=url;img.alt=item.name||'有词卡片';
+    img.onclick=()=>openLightbox({image_width:item.width,image_height:item.height},card,img.src);picture.append(img);
+    if(item.width>item.height)picture.style.height=`${Math.min(60,item.height/item.width*100)}%`;
+    else picture.style.width=`${Math.min(60,item.width/item.height*100)}%`;
+  }else{
+    const summary=document.createElement('span');summary.className='text-summary';summary.textContent=item.summary||item.positive.slice(0,30);picture.append(summary);
+    picture.style.height='60%';
+  }
+  const panel=document.createElement('div');panel.className='reverse-panel';
+  panel.append(createPromptControl(item.positive,{kind:'worded',id:item.id,imageUrl:url,summary:item.summary,
+    onSaved:value=>{item.positive=value;loadWordedGallery(true)}}));
+  if(item.folder==='pending'){
+    const status=document.createElement('span');status.className='worded-status';status.textContent=item.reverseStatus==='failed'?'错误':item.reverseStatus==='processing'?'处理中':'等待';
+    panel.append(status);
+  }
+  const ai=document.createElement('button');ai.className='ai-button';ai.textContent='AI';
+  ai.title=item.folder==='pending'?'移回有词区':'加入待反推';
+  ai.onclick=event=>{event.stopPropagation();changeWordedFolder(item,item.folder==='pending'?'worded':'pending')};
+  picture.append(ai);
+  if(item.folder!=='pending') {
+    const completed=document.createElement('button');completed.type='button';
+    completed.className='completed-button active';
+    completed.textContent=item.folder==='completed'?'✓':'○';
+    completed.title=item.folder==='completed'?'移回有词区':'释放至已完成';
+    completed.setAttribute('aria-label',completed.title);
+    completed.onclick=event=>{event.stopPropagation();changeWordedFolder(item,item.folder==='completed'?'worded':'completed')};
+    picture.append(completed);
+  }
+  const remove=document.createElement('button');remove.className='worded-delete';remove.textContent='删除';remove.title='删除本地卡片及图片';
+  remove.onclick=async()=>{
+    if(!confirm('删除此卡片及本地图片？'))return;
+    const response=await fetch(`/api/worded/entries/${encodeURIComponent(item.id)}`,{method:'DELETE'});
+    if(response.ok){card.remove();loadWordedGallery(true)}else toast('删除失败');
+  };
+  card.append(picture,panel,remove);card.oncontextmenu=event=>showManualMenu(event,item);
+  const index=state.heights.indexOf(Math.min(...state.heights));state.columns[index].append(card);state.heights[index]+=1;
+}
+function renderMetadataCard(item, collection = 'metadata') {
+  if(collection==='worded')return renderWordedCard(item);
   const card = document.createElement('article');
-  card.className = `reverse-card metadata-card ${item.width > item.height ? 'landscape' : 'portrait'}`;
+  card.className = `reverse-card metadata-card ${item.source === '手写' && !item.imageExt ? 'text-only' : item.width > item.height ? 'landscape' : 'portrait'}`;
   const picture = document.createElement('div'); picture.className = 'reverse-picture';
-  const img = document.createElement('img'); img.loading = 'lazy'; img.alt = item.name; img.src = `/api/metadata/images/${encodeURIComponent(item.id)}`;
-  img.onclick = () => openLightbox({image_width:item.width,image_height:item.height},card,img.src);
-  picture.append(img);
-  if (item.width > item.height) picture.style.height = `${Math.min(58,item.height/item.width*100)}%`;
-  else picture.style.width = `${Math.min(58,item.width/item.height*100)}%`;
+  const img = document.createElement('img'); img.loading = 'lazy'; img.alt = item.name; if(item.imageExt || item.source !== '手写') img.src = `/api/${collection}/images/${encodeURIComponent(item.id)}`;
+  if(img.src && (item.imageExt || item.source !== '手写')) { img.onclick = () => openLightbox({image_width:item.width,image_height:item.height},card,img.src); picture.append(img); }
+  else { const summary=document.createElement('span');summary.className='text-summary';summary.textContent=item.summary || item.positive.slice(0,30);picture.append(summary); }
+  if(item.imageExt || item.source !== '手写') {
+    if (item.width > item.height) picture.style.height = `${Math.min(58,item.height/item.width*100)}%`;
+    else picture.style.width = `${Math.min(58,item.width/item.height*100)}%`;
+  } else picture.style.height='60%';
   const panel = document.createElement('div'); panel.className = 'reverse-panel';
   const line = (title,value) => { const el = document.createElement('div'); el.className='metadata-line'; const strong=document.createElement('strong'); strong.textContent=title+'：'; const span=document.createElement('span');span.textContent=value || '未识别';el.title=value || '未识别';el.append(strong,span);panel.append(el); };
-  line('底模',item.model); line('参数',[item.positive && `正向：${item.positive}`,item.negative && `反向：${item.negative}`].filter(Boolean).join(' / ') || item.source);
+  if(item.source !== '手写') { line('底模',item.model); line('参数',[item.positive && `正向：${item.positive}`,item.negative && `反向：${item.negative}`].filter(Boolean).join(' / ') || item.source);
   const details=document.createElement('details'); details.className='metadata-loras';
   const summary=document.createElement('summary'); summary.textContent=`LoRA（${item.loras?.length || 0}）`; details.append(summary);
   for(const lora of item.loras || []) { const el=document.createElement('div'); el.textContent=`${lora.name}${lora.strength == null ? '' : ' · '+lora.strength}`; details.append(el); }
   if(!item.loras?.length) { const el=document.createElement('div');el.textContent='未识别';details.append(el); }
   panel.append(details);
   line('生图参数',[['CFG',item.cfg],['步数',item.steps],['采样器',item.sampler],['调度器',item.scheduler],['种子',item.seed],['降噪',item.denoise]].map(([k,v])=>`${k} ${v || '—'}`).join(' · '));
+  }
   const actions=document.createElement('div');actions.className='metadata-actions';
-  const copy=document.createElement('button');copy.textContent='复制提示词';copy.disabled=!item.positive; copy.onclick=async()=>{try{await navigator.clipboard.writeText(item.positive);toast('已复制提示词');}catch(e){toast('复制失败：'+e.message)}};actions.append(copy);
-  if(item.positive){const view=document.createElement('button');view.textContent='查看提示词';view.onclick=()=>showPromptDialog(item.positive);actions.append(view);}
-  const remove=document.createElement('button');remove.textContent='删除';remove.onclick=async()=>{if(!confirm('删除此元数据图片及本地缓存？'))return;const res=await fetch(`/api/metadata/images/${encodeURIComponent(item.id)}`,{method:'DELETE'});if(res.ok)loadMetadataGallery();else toast('删除失败');};actions.append(remove);panel.append(actions);
+  actions.append(createPromptControl(item.positive, {kind:collection, id:item.id, imageUrl:item.imageExt ? `/api/${collection}/images/${encodeURIComponent(item.id)}` : '', onSaved: value => { item.positive = value; }}));
+  if(item.source === '手写') {
+    const paste=document.createElement('button');paste.textContent='粘贴图片';paste.title='点击后按 Ctrl+V，也可直接授权读取剪贴板';
+    const upload=async(file)=>{try{const bitmap=await createImageBitmap(file);const url=`/api/${collection}/images/${encodeURIComponent(item.id)}?width=${bitmap.width}&height=${bitmap.height}`;bitmap.close();
+      const res=await fetch(url,{method:'PUT',headers:{'Content-Type':file.type},body:file});const data=await res.json();if(!res.ok)throw Error(data.error);loadWordedGallery(true);}catch(e){toast('粘贴失败：'+e.message)}};
+    const chooser=document.createElement('input');chooser.type='file';chooser.accept='image/png,image/jpeg,image/webp';chooser.hidden=true;
+    chooser.onchange=async()=>{if(chooser.files[0])await upload(chooser.files[0]);chooser.value=''};
+    paste.onclick=async()=>{paste.focus();try{if(!navigator.clipboard?.read)throw Error('unsupported');
+      const entries=await navigator.clipboard.read();for(const entry of entries){const type=entry.types.find(x=>x.startsWith('image/'));if(type){await upload(await entry.getType(type));return}}
+    }catch{}chooser.click()};
+    paste.onpaste=e=>{const file=[...e.clipboardData.files].find(x=>x.type.startsWith('image/'));if(file){e.preventDefault();upload(file)}};actions.append(paste,chooser);
+  }
+  const remove=document.createElement('button');remove.textContent='删除';remove.onclick=async()=>{if(!confirm('删除此卡片及本地图片？'))return;const url=collection==='worded'?`/api/worded/entries/${encodeURIComponent(item.id)}`:`/api/metadata/images/${encodeURIComponent(item.id)}`;const res=await fetch(url,{method:'DELETE'});if(res.ok)(collection==='worded'?loadWordedGallery():loadMetadataGallery());else toast('删除失败');};actions.append(remove);panel.append(actions);
   card.append(picture,panel);const index=state.heights.indexOf(Math.min(...state.heights));state.columns[index].append(card);state.heights[index]+=1;
 }
+document.querySelector('#manualWorded').onclick=()=>showPromptDialog('',{kind:'create'});
+async function uploadFavoriteImage(id,file) {
+  const bitmap=await createImageBitmap(file);
+  const url=`/api/favorites/${encodeURIComponent(id)}/image?width=${bitmap.width}&height=${bitmap.height}`;
+  bitmap.close();
+  const response=await fetch(url,{method:'PUT',headers:{'Content-Type':file.type},body:file});
+  const result=await response.json();if(!response.ok)throw Error(result.error||`HTTP ${response.status}`);
+  const index=favoriteCache.findIndex(item=>String(item.id)===String(id));
+  if(index>=0)favoriteCache[index]=result.favorite;
+  localStorage.setItem(FAVORITES_KEY,JSON.stringify(favoriteCache));
+}
+async function uploadWordedImage(id,file) {
+  const bitmap=await createImageBitmap(file);
+  const url=`/api/worded/images/${encodeURIComponent(id)}?width=${bitmap.width}&height=${bitmap.height}`;
+  bitmap.close();
+  const response=await fetch(url,{method:'PUT',headers:{'Content-Type':file.type},body:file});
+  const result=await response.json(); if(!response.ok)throw Error(result.error || `HTTP ${response.status}`);
+}
+document.addEventListener('dragover',event=>{
+  if(mode==='favorites' && [...(event.dataTransfer?.types || [])].includes('Files'))event.preventDefault();
+});
+document.addEventListener('drop',event=>{
+  if(mode!=='favorites' || ![...(event.dataTransfer?.files || [])].some(f=>f.type.startsWith('image/')))return;
+  event.preventDefault();
+  if(event.target.closest?.('.prompt-workspace'))return;
+  showPromptDialog('',{kind:'create',imageFile:[...event.dataTransfer.files].find(f=>f.type.startsWith('image/'))});
+});
+setInterval(()=>{if(mode==='metadata' && !document.activeElement?.matches('input,textarea'))loadMetadataGallery()},10000);
 document.querySelector('#metadataFiles').onchange=async event=>{
   const files=[...event.target.files]; let success=0;
   for(const file of files){try{const res=await fetch(`/api/metadata/images?name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'Content-Type':'image/png'},body:file});const body=await res.json();if(!res.ok)throw Error(body.error || `HTTP ${res.status}`);success++;}catch(e){toast(`${file.name}：${e.message}`)}}
   event.target.value='';if(success) {toast(`已导入 ${success} 张图片`);loadMetadataGallery();}
 };
-document.querySelectorAll('#favoriteFolders [data-folder]').forEach(button=>button.addEventListener('click',()=>{document.querySelector('#metadataUpload').hidden=button.dataset.folder!=='metadata'}));
-document.querySelectorAll('.mode').forEach(button=>button.addEventListener('click',()=>{document.querySelector('#metadataUpload').hidden=mode!=='favorites'||favoriteFolder!=='metadata'}));
