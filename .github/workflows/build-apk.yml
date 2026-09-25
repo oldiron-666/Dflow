@@ -1,0 +1,78 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-apk.yml'
+
+jobs:
+  build:
+    name: Build Capacitor Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies & setup Capacitor
+        run: |
+          npm install
+          npm install @capacitor/core@latest @capacitor/cli@latest @capacitor/android@latest
+          
+          # 注入防盗链 meta
+          if ! grep -q 'name="referrer"' public/index.html; then
+            sed -i 's/<head>/<head>\n  <meta name="referrer" content="no-referrer">/' public/index.html
+          fi
+
+          # 初始化 Capacitor 配置
+          cat << 'EOF' > capacitor.config.json
+          {
+            "appId": "com.oldiron.dflow",
+            "appName": "DFlow",
+            "webDir": "public",
+            "server": {
+              "androidScheme": "https",
+              "cleartext": true
+            }
+          }
+          EOF
+
+          npx cap add android
+          npx cap sync android
+
+          # 确保 Android 工程开启网络权限与明文 HTTP 传输（部分机型加载外部图片需要）
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$MANIFEST"
+          fi
+
+      - name: Build Android Debug APK
+        run: |
+          cd android
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DFlow-Android-Debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
