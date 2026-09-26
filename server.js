@@ -23,7 +23,15 @@ const PRESET_NAMES = ["动作扩写", "艺术导演扩写", "巨构提示词", "
 const VALID_PRESETS = new Set([...PRESET_NAMES, "随机"]);
 const favoriteFolderOf = post => ["original", "pending", "worded", "completed"].includes(post.folder) ? post.folder : (post.completed ? "completed" : "original");
 const defaultSharedState = () => ({
-  account: { loginName: "", loginKey: "", googleTranslateKey: "" },
+  account: {
+    loginName: "", loginKey: "", googleTranslateKey: "",
+    pixivCookie: "", pixivRefreshToken: "",
+    primaryTranslator: "deepl",
+    translateFallback: true,
+    deeplKey: "",
+    tencentSecretId: "", tencentSecretKey: "",
+    volcAccessKey: "", volcSecretKey: ""
+  },
   favorites: [],
   preferences: { mode: "latest", columns: 5, ratings: ["g", "s", "q", "e"], search: "", selectedTags: [] },
   updatedAt: null
@@ -64,37 +72,196 @@ function writeSharedState() {
   fs.writeFileSync(STATE_FILE, JSON.stringify(sharedState, null, 2), "utf8");
 }
 function cleanFavorite(post) {
-  if (!post || !Number(post.id)) return null;
+  if (!post) return null;
+  const isPixiv = (typeof post.id === "string" && post.id.startsWith("px_")) || post.source === "pixiv";
+  const id = isPixiv ? String(post.id) : Number(post.id);
+  if (!id) return null;
   return {
-    id: Number(post.id), rating: String(post.rating || "s"),
-    preview_file_url: String(post.preview_file_url || ""), large_file_url: String(post.large_file_url || ""), file_url: String(post.file_url || ""),
-    image_width: Number(post.image_width) || 0, image_height: Number(post.image_height) || 0,
-    tag_string_general: String(post.tag_string_general || ""), tag_string_character: String(post.tag_string_character || ""),
-    tag_string_copyright: String(post.tag_string_copyright || ""), created_at: String(post.created_at || ""), completed: favoriteFolderOf(post) === "completed",
-    folder: favoriteFolderOf(post), preset: VALID_PRESETS.has(post.preset) ? post.preset : "动漫专用",
-    autoEnabled: post.autoEnabled !== false, queueOrder: Math.max(0, Number(post.queueOrder) || 0), prompt: String(post.prompt || "").slice(0, 100000), customInstruction: String(post.customInstruction || "").slice(0, 4000),
-    resolvedPreset: String(post.resolvedPreset || ""), reverseStatus: String(post.reverseStatus || "idle"),
+    id,
+    source: isPixiv ? "pixiv" : "danbooru",
+    pixiv_id: post.pixiv_id || (isPixiv ? String(post.id).replace(/^px_/, "").split("_")[0] : null),
+    page_count: Number(post.page_count) || 1,
+    title: String(post.title || "").slice(0, 300),
+    author: String(post.author || post.user_name || "").slice(0, 100),
+    rating: String(post.rating || "g"),
+    preview_file_url: String(post.preview_file_url || ""),
+    large_file_url: String(post.large_file_url || ""),
+    file_url: String(post.file_url || ""),
+    image_width: Number(post.image_width) || 0,
+    image_height: Number(post.image_height) || 0,
+    tag_string_general: String(post.tag_string_general || post.tag_string || ""),
+    tag_string_character: String(post.tag_string_character || ""),
+    tag_string_copyright: String(post.tag_string_copyright || ""),
+    created_at: String(post.created_at || ""),
+    completed: favoriteFolderOf(post) === "completed",
+    folder: favoriteFolderOf(post),
+    preset: VALID_PRESETS.has(post.preset) ? post.preset : "动漫专用",
+    autoEnabled: post.autoEnabled !== false,
+    queueOrder: Math.max(0, Number(post.queueOrder) || 0),
+    prompt: String(post.prompt || "").slice(0, 100000),
+    customInstruction: String(post.customInstruction || "").slice(0, 4000),
+    resolvedPreset: String(post.resolvedPreset || ""),
+    reverseStatus: String(post.reverseStatus || "idle"),
     reverseError: String(post.reverseError || "").slice(0, 1000),
-    cacheStatus: String(post.cacheStatus || "idle"), cacheFile: String(post.cacheFile || ""),
-    cacheError: String(post.cacheError || "").slice(0, 1000), reverseStartedAt: String(post.reverseStartedAt || ""), wordedAt: String(post.wordedAt || "")
+    cacheStatus: String(post.cacheStatus || "idle"),
+    cacheFile: String(post.cacheFile || ""),
+    cacheError: String(post.cacheError || "").slice(0, 1000),
+    reverseStartedAt: String(post.reverseStartedAt || ""),
+    wordedAt: String(post.wordedAt || "")
   };
 }
-// An optional official Cloud Translation API key avoids the unauthenticated web
-// endpoint's 429 throttling. Never expose the key to browsers or log its URL.
+// Multi-engine Translation System (DeepL, Tencent Cloud TMT, Volcengine, Google) with Failover
 const GOOGLE_TRANSLATE_API_KEY = process.env.GOOGLE_TRANSLATE_API_KEY?.trim();
+const getGoogleTranslateKey = () => (sharedState.account?.googleTranslateKey || GOOGLE_TRANSLATE_API_KEY || "").trim();
+
+async function translateDeepL(text, source, target, key, signal) {
+  if (!key) throw Error("未配置 DeepL Auth Key");
+  const host = key.endsWith(":fx") ? "api-free.deepl.com" : "api.deepl.com";
+  const targetLang = target.toUpperCase().startsWith("ZH") ? "ZH" : "EN";
+  const sourceLang = source.toUpperCase().startsWith("ZH") ? "ZH" : "EN";
+  const response = await fetch(`https://${host}/v2/translate`, {
+    method: "POST",
+    headers: {
+      "Authorization": `DeepL-Auth-Key ${key}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      text: [text],
+      target_lang: targetLang,
+      source_lang: sourceLang
+    }),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(15000)])
+  });
+  if (!response.ok) {
+    const errText = await response.text();
+    throw Error(`DeepL HTTP ${response.status}: ${errText.slice(0, 120)}`);
+  }
+  const data = await response.json();
+  const resText = data.translations?.[0]?.text;
+  if (!resText) throw Error("DeepL 未返回翻译结果");
+  return resText;
+}
+
+async function translateTencent(text, source, target, secretId, secretKey, signal) {
+  if (!secretId || !secretKey) throw Error("未配置腾讯云 SecretId 或 SecretKey");
+  const host = "tmt.tencentcloudapi.com";
+  const action = "TextTranslate";
+  const version = "2018-03-21";
+  const region = "ap-guangzhou";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const date = new Date(timestamp * 1000).toISOString().split("T")[0];
+  const payload = JSON.stringify({
+    SourceText: text,
+    Source: source.startsWith("zh") ? "zh" : "en",
+    Target: target.startsWith("zh") ? "zh" : "en",
+    ProjectId: 0
+  });
+
+  const hashedPayload = crypto.createHash("sha256").update(payload).digest("hex");
+  const canonicalHeaders = `content-type:application/json; charset=utf-8\nhost:${host}\nx-tc-action:${action.toLowerCase()}\n`;
+  const signedHeaders = "content-type;host;x-tc-action";
+  const canonicalRequest = `POST\n/\n\n${canonicalHeaders}\n${signedHeaders}\n${hashedPayload}`;
+
+  const hashedCanonicalRequest = crypto.createHash("sha256").update(canonicalRequest).digest("hex");
+  const stringToSign = `TC3-HMAC-SHA256\n${timestamp}\n${date}/tmt/tc3_request\n${hashedCanonicalRequest}`;
+
+  const kDate = crypto.createHmac("sha256", "TC3" + secretKey).update(date).digest();
+  const kService = crypto.createHmac("sha256", kDate).update("tmt").digest();
+  const kSigning = crypto.createHmac("sha256", kService).update("tc3_request").digest();
+  const signature = crypto.createHmac("sha256", kSigning).update(stringToSign).digest("hex");
+
+  const authorization = `TC3-HMAC-SHA256 Credential=${secretId}/${date}/tmt/tc3_request, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  const response = await fetch(`https://${host}`, {
+    method: "POST",
+    headers: {
+      "Authorization": authorization,
+      "Content-Type": "application/json; charset=utf-8",
+      "Host": host,
+      "X-TC-Action": action,
+      "X-TC-Version": version,
+      "X-TC-Timestamp": String(timestamp),
+      "X-TC-Region": region
+    },
+    body: payload,
+    signal: AbortSignal.any([signal, AbortSignal.timeout(15000)])
+  });
+
+  const data = await response.json();
+  if (data?.Response?.Error) {
+    throw Error(`腾讯云翻译 [${data.Response.Error.Code}]: ${data.Response.Error.Message}`);
+  }
+  const translated = data?.Response?.TargetText;
+  if (!translated) throw Error("腾讯云未返回有效翻译结果");
+  return translated;
+}
+
+async function translateVolcengine(text, source, target, accessKey, secretKey, signal) {
+  if (!accessKey || !secretKey) throw Error("未配置火山引擎 AccessKey 或 SecretKey");
+  const service = "translate";
+  const version = "2020-06-01";
+  const region = "cn-north-1";
+  const host = "translate.volcengineapi.com";
+  const now = new Date();
+  const dateStamp = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 8);
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const payload = JSON.stringify({
+    TargetLanguage: target.startsWith("zh") ? "zh" : "en",
+    SourceLanguage: source.startsWith("zh") ? "zh" : "en",
+    TextList: [text]
+  });
+
+  const hashedPayload = crypto.createHash("sha256").update(payload).digest("hex");
+  const canonicalHeaders = `content-type:application/json\nhost:${host}\nx-content-sha256:${hashedPayload}\nx-date:${amzDate}\n`;
+  const signedHeaders = "content-type;host;x-content-sha256;x-date";
+  const canonicalRequest = `POST\n/\nAction=TranslateText&Version=${version}\n${canonicalHeaders}\n${signedHeaders}\n${hashedPayload}`;
+
+  const hashedCanonical = crypto.createHash("sha256").update(canonicalRequest).digest("hex");
+  const stringToSign = `HMAC-SHA256\n${amzDate}\n${dateStamp}/${region}/${service}/request\n${hashedCanonical}`;
+
+  const kDate = crypto.createHmac("sha256", secretKey).update(dateStamp).digest();
+  const kRegion = crypto.createHmac("sha256", kDate).update(region).digest();
+  const kService = crypto.createHmac("sha256", kRegion).update(service).digest();
+  const kSigning = crypto.createHmac("sha256", kService).update("request").digest();
+  const signature = crypto.createHmac("sha256", kSigning).update(stringToSign).digest("hex");
+
+  const authorization = `HMAC-SHA256 Credential=${accessKey}/${dateStamp}/${region}/${service}/request, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  const response = await fetch(`https://${host}/?Action=TranslateText&Version=${version}`, {
+    method: "POST",
+    headers: {
+      "Authorization": authorization,
+      "Content-Type": "application/json",
+      "Host": host,
+      "X-Date": amzDate,
+      "X-Content-Sha256": hashedPayload
+    },
+    body: payload,
+    signal: AbortSignal.any([signal, AbortSignal.timeout(15000)])
+  });
+
+  const data = await response.json();
+  if (data?.ResponseMetadata?.Error) {
+    throw Error(`火山引擎翻译 [${data.ResponseMetadata.Error.Code}]: ${data.ResponseMetadata.Error.Message}`);
+  }
+  const translated = data?.TranslationList?.[0]?.Translation;
+  if (!translated) throw Error("火山引擎未返回翻译结果");
+  return translated;
+}
+
 async function googleTranslatePart(part, source, target, signal) {
-  if (googleTranslateKey()) {
+  const gKey = getGoogleTranslateKey();
+  if (gKey) {
     const response = await fetch('https://translation.googleapis.com/language/translate/v2', {
       method: 'POST',
-      headers: {'Content-Type':'application/json', 'X-goog-api-key':googleTranslateKey()},
+      headers: {'Content-Type':'application/json', 'X-goog-api-key': gKey},
       body: JSON.stringify({q:part, source, target, format:'text'}),
       signal: AbortSignal.any([signal, AbortSignal.timeout(20000)])
     });
-    if (!response.ok) throw Error(`Google Cloud Translation HTTP ${response.status}（请检查 API Key、服务启用和结算配置）`);
+    if (!response.ok) throw Error(`Google Cloud Translation HTTP ${response.status}`);
     const data = await response.json();
     const translated = data?.data?.translations?.[0]?.translatedText;
     if (typeof translated !== 'string') throw Error('Google Cloud Translation 响应格式错误');
-    // Cloud Translation v2 encodes HTML entities even with format:text.
     return translated.replace(/&(#(?:x[0-9a-f]+|[0-9]+)|amp|lt|gt|quot|apos|#39);/gi, (match, entity) => {
       const named = {amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",'#39':"'"};
       if (named[entity.toLowerCase()]) return named[entity.toLowerCase()];
@@ -106,12 +273,67 @@ async function googleTranslatePart(part, source, target, signal) {
   url.search = new URLSearchParams({client:'gtx',sl:source,tl:target,dt:'t',q:part}).toString();
   const response = await fetch(url, {signal:AbortSignal.any([signal, AbortSignal.timeout(20000)])});
   if (!response.ok) throw Error(response.status === 429
-    ? 'Google 网页翻译返回 429（即使短句也会失败）；需要等待 Google 解除限制，或自愿配置官方 Cloud Translation API Key'
+    ? 'Google 网页翻译返回 429（请在设置中配置 DeepL、腾讯云或火山引擎）'
     : `Google 网页翻译 HTTP ${response.status}`);
   const data = await response.json();
   if (!Array.isArray(data?.[0])) throw Error('Google 网页翻译响应格式错误');
   return data[0].map(segment => segment?.[0] || '').join('');
 }
+
+async function runTranslationWithFailover(text, source, target, signal) {
+  const account = sharedState.account || {};
+  const primary = account.primaryTranslator || "deepl";
+  const fallback = account.translateFallback !== false;
+
+  const engines = [
+    {
+      id: "deepl",
+      name: "DeepL",
+      available: Boolean(account.deeplKey?.trim()),
+      fn: () => translateDeepL(text, source, target, account.deeplKey.trim(), signal)
+    },
+    {
+      id: "tencent",
+      name: "腾讯云 TMT",
+      available: Boolean(account.tencentSecretId?.trim() && account.tencentSecretKey?.trim()),
+      fn: () => translateTencent(text, source, target, account.tencentSecretId.trim(), account.tencentSecretKey.trim(), signal)
+    },
+    {
+      id: "volcengine",
+      name: "火山引擎",
+      available: Boolean(account.volcAccessKey?.trim() && account.volcSecretKey?.trim()),
+      fn: () => translateVolcengine(text, source, target, account.volcAccessKey.trim(), account.volcSecretKey.trim(), signal)
+    },
+    {
+      id: "google",
+      name: "Google 翻译",
+      available: true,
+      fn: () => googleTranslatePart(text, source, target, signal)
+    }
+  ];
+
+  const order = [
+    ...engines.filter(e => e.id === primary),
+    ...engines.filter(e => e.id !== primary)
+  ];
+
+  const errors = [];
+  for (let i = 0; i < order.length; i++) {
+    const engine = order[i];
+    if (i > 0 && !fallback) break;
+    if (!engine.available && engine.id !== "google") continue;
+
+    try {
+      const result = await engine.fn();
+      return { text: result, engine: engine.name, usedFallback: i > 0 };
+    } catch (err) {
+      errors.push(`${engine.name}: ${err.message}`);
+    }
+  }
+
+  throw Error(`全部翻译引擎尝试失败：\n${errors.join("\n")}`);
+}
+
 function translationChunks(text, maxLength = 900) {
   const chunks = []; let current = '';
   for (const line of text.match(/[^\n]*\n|[^\n]+$/g) || []) {
@@ -130,6 +352,7 @@ function translationChunks(text, maxLength = 900) {
   if (current) chunks.push(current);
   return chunks;
 }
+
 app.post('/api/translate', async (req, res) => {
   const text = typeof req.body?.text === 'string' ? req.body.text : '';
   const direction = req.body?.direction;
@@ -140,15 +363,21 @@ app.post('/api/translate', async (req, res) => {
   res.on('close', () => controller.abort());
   try {
     const translated = [];
+    let lastEngine = '';
+    let fallbackHappened = false;
     for (const part of translationChunks(text)) {
       if (!part.trim()) { translated.push(part); continue; }
-      translated.push(await googleTranslatePart(part, source, target, controller.signal));
+      const resObj = await runTranslationWithFailover(part, source, target, controller.signal);
+      translated.push(resObj.text);
+      lastEngine = resObj.engine;
+      if (resObj.usedFallback) fallbackHappened = true;
     }
-    if (!res.headersSent) res.json({text:translated.join('')});
+    if (!res.headersSent) res.json({text: translated.join(''), engine: lastEngine, usedFallback: fallbackHappened});
   } catch (error) {
-    if (!res.headersSent && !controller.signal.aborted) res.status(502).json({error:`Google 翻译失败：${error.message}`});
+    if (!res.headersSent && !controller.signal.aborted) res.status(502).json({error:`翻译失败：${error.message}`});
   }
 });
+
 app.post('/api/translate-segments', async (req, res) => {
   const segments = req.body?.segments;
   if (req.body?.direction !== 'en-zh' || !Array.isArray(segments) || !segments.length ||
@@ -160,31 +389,73 @@ app.post('/api/translate-segments', async (req, res) => {
   res.on('close', () => controller.abort());
   try {
     const translated = [];
+    let lastEngine = '';
+    let fallbackHappened = false;
     for (const part of segments) {
       if (!part.trim()) { translated.push(part); continue; }
       const chunks = [];
       for (const chunk of translationChunks(part)) {
-        chunks.push(await googleTranslatePart(chunk, 'en', 'zh-CN', controller.signal));
+        const resObj = await runTranslationWithFailover(chunk, 'en', 'zh-CN', controller.signal);
+        chunks.push(resObj.text);
+        lastEngine = resObj.engine;
+        if (resObj.usedFallback) fallbackHappened = true;
       }
       translated.push(chunks.join(''));
     }
-    if (!res.headersSent) res.json({segments:translated});
+    if (!res.headersSent) res.json({segments: translated, engine: lastEngine, usedFallback: fallbackHappened});
   } catch (error) {
-    if (!res.headersSent && !controller.signal.aborted) res.status(502).json({error:`Google 翻译失败：${error.message}`});
+    if (!res.headersSent && !controller.signal.aborted) res.status(502).json({error:`翻译失败：${error.message}`});
   }
 });
+
+app.post('/api/translate-test', async (req, res) => {
+  const engine = req.body?.engine || req.body?.primaryTranslator || sharedState.account.primaryTranslator || "deepl";
+  const text = req.body?.text || "erotic lingerie girl with exposed cleavage, beautiful anime face, highly detailed";
+  const controller = new AbortController();
+  res.on('close', () => controller.abort());
+  try {
+    let result = '';
+    if (engine === 'deepl') {
+      result = await translateDeepL(text, 'en', 'zh-CN', req.body?.deeplKey || sharedState.account.deeplKey, controller.signal);
+    } else if (engine === 'tencent') {
+      result = await translateTencent(text, 'en', 'zh-CN', req.body?.tencentSecretId || sharedState.account.tencentSecretId, req.body?.tencentSecretKey || sharedState.account.tencentSecretKey, controller.signal);
+    } else if (engine === 'volcengine') {
+      result = await translateVolcengine(text, 'en', 'zh-CN', req.body?.volcAccessKey || sharedState.account.volcAccessKey, req.body?.volcSecretKey || sharedState.account.volcSecretKey, controller.signal);
+    } else {
+      result = await googleTranslatePart(text, 'en', 'zh-CN', controller.signal);
+    }
+    res.json({ ok: true, engine, original: text, translated: result });
+  } catch (error) {
+    res.status(502).json({ ok: false, engine, error: error.message });
+  }
+});
+
 app.get("/api/state", (_req, res) => res.json(sharedState));
 app.put("/api/account", (req, res) => {
+  const body = req.body || {};
   sharedState.account = {
-    loginName: String(req.body?.loginName || "").trim(),
-    loginKey: String(req.body?.loginKey || "").trim(),
-    googleTranslateKey: String(req.body?.googleTranslateKey || "").trim()
+    ...sharedState.account,
+    loginName: String(body.loginName ?? sharedState.account.loginName ?? "").trim(),
+    loginKey: String(body.loginKey ?? sharedState.account.loginKey ?? "").trim(),
+    googleTranslateKey: String(body.googleTranslateKey ?? sharedState.account.googleTranslateKey ?? "").trim(),
+    pixivCookie: String(body.pixivCookie ?? sharedState.account.pixivCookie ?? "").trim(),
+    pixivRefreshToken: String(body.pixivRefreshToken ?? sharedState.account.pixivRefreshToken ?? "").trim(),
+    primaryTranslator: String(body.primaryTranslator ?? sharedState.account.primaryTranslator ?? "deepl").trim(),
+    translateFallback: body.translateFallback !== undefined ? Boolean(body.translateFallback) : (sharedState.account.translateFallback !== false),
+    deeplKey: String(body.deeplKey ?? sharedState.account.deeplKey ?? "").trim(),
+    tencentSecretId: String(body.tencentSecretId ?? sharedState.account.tencentSecretId ?? "").trim(),
+    tencentSecretKey: String(body.tencentSecretKey ?? sharedState.account.tencentSecretKey ?? "").trim(),
+    volcAccessKey: String(body.volcAccessKey ?? sharedState.account.volcAccessKey ?? "").trim(),
+    volcSecretKey: String(body.volcSecretKey ?? sharedState.account.volcSecretKey ?? "").trim()
   };
   writeSharedState();
   res.json({ ok: true, account: sharedState.account, updatedAt: sharedState.updatedAt });
 });
 app.put("/api/preferences", (req, res) => {
-  const allowedModes = new Set(["latest", "popular-day", "popular-week", "popular-month", "viewed", "favcount", "comment", "upvotes", "score", "rank", "mpixels", "favorites", "metadata"]);
+  const allowedModes = new Set([
+    "latest", "popular-day", "popular-week", "popular-month", "viewed", "favcount", "comment", "upvotes", "score", "rank", "mpixels", "favorites", "metadata",
+    "pixiv-daily", "pixiv-weekly", "pixiv-monthly", "pixiv-ai", "pixiv-r18"
+  ]);
   const validRatings = ["g", "s", "q", "e"];
   const body = req.body || {};
   const ratings = Array.isArray(body.ratings) ? body.ratings.filter(x => validRatings.includes(x)) : sharedState.preferences.ratings;
@@ -201,18 +472,18 @@ app.put("/api/preferences", (req, res) => {
 app.put("/api/favorites", (req, res) => {
   const values = Array.isArray(req.body?.favorites) ? req.body.favorites : [];
   // Browser copies may be stale: preserve worker-owned results and disk metadata.
-  const oldById = new Map(sharedState.favorites.map(item => [Number(item.id), item]));
+  const oldById = new Map(sharedState.favorites.map(item => [String(item.id), item]));
   sharedState.favorites = values.map(item => {
-    const prior = oldById.get(Number(item?.id));
+    const prior = oldById.get(String(item?.id));
     return cleanFavorite(prior ? { ...item, folder: prior.folder, completed: prior.completed,
       preset: prior.preset, autoEnabled: prior.autoEnabled, queueOrder: prior.queueOrder, prompt: prior.prompt,
       resolvedPreset: prior.resolvedPreset, customInstruction: prior.customInstruction, reverseStatus: prior.reverseStatus,
       reverseError: prior.reverseError, cacheStatus: prior.cacheStatus,
       cacheFile: prior.cacheFile, cacheError: prior.cacheError, reverseStartedAt: prior.reverseStartedAt, wordedAt: prior.wordedAt } : item);
   }).filter(Boolean).slice(0, 5000);
-  const kept = new Set(sharedState.favorites.map(item => item.id));
+  const kept = new Set(sharedState.favorites.map(item => String(item.id)));
   for (const prior of oldById.values()) {
-    if (kept.has(prior.id)) continue;
+    if (kept.has(String(prior.id))) continue;
     const file = imagePath(prior);
     if (file) fs.rmSync(file, {force:true});
   }
@@ -224,31 +495,35 @@ app.put("/api/favorites", (req, res) => {
   renumberReverseQueue();
   writeSharedState();
   for (const item of sharedState.favorites) if (item.cacheStatus === "idle" && item.folder !== "original") scheduleCache(item.id);
-  for (const item of sharedState.favorites) if (!oldById.has(item.id) && item.folder === "original") scheduleCache(item.id);
+  for (const item of sharedState.favorites) if (!oldById.has(String(item.id)) && item.folder === "original") scheduleCache(item.id);
   res.json({ ok: true, favorites: sharedState.favorites, updatedAt: sharedState.updatedAt });
 });
 // The reverse queue is local to this server. Never fetch originals for it.
 const cacheJobs = new Set();
 let cacheTail = Promise.resolve();
-function favoriteById(id) { return sharedState.favorites.find(item => item.id === Number(id)); }
+function favoriteById(id) { return sharedState.favorites.find(item => String(item.id) === String(id)); }
 function imagePath(item) {
-  if (!item.cacheFile || !/^[0-9]+\.(jpg|jpeg|png|webp|gif)$/i.test(item.cacheFile)) return null;
+  if (!item.cacheFile || !/^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif)$/i.test(item.cacheFile)) return null;
   return path.join(item.folder === "completed" ? COMPLETED_IMAGE_DIR : item.folder === "worded" ? WORDED_IMAGE_DIR : item.folder === "original" ? ORIGINAL_IMAGE_DIR : PENDING_IMAGE_DIR, item.cacheFile);
 }
 function scheduleCache(id) {
   const item = favoriteById(id);
-  if (!item || item.cacheStatus === "ready" || cacheJobs.has(id)) return;
-  cacheJobs.add(id);
+  if (!item || item.cacheStatus === "ready" || cacheJobs.has(String(id))) return;
+  cacheJobs.add(String(id));
   cacheTail = cacheTail.catch(() => {}).then(async () => {
     await new Promise(resolve => setTimeout(resolve, 850));
     const current = favoriteById(id);
-    if (!current || current.cacheStatus === 'ready') { cacheJobs.delete(id); return; }
+    if (!current || current.cacheStatus === 'ready') { cacheJobs.delete(String(id)); return; }
     current.cacheStatus = "loading"; current.cacheError = ""; writeSharedState();
     let tmp;
     try {
       const url = new URL(current.large_file_url);
-      if (url.protocol !== "https:" || (url.hostname !== "donmai.us" && !url.hostname.endsWith(".donmai.us"))) throw Error("No valid large image URL");
-      const response = await fetch(url, { headers: {"User-Agent":"DFlow/0.1 (local reverse cache)"}, signal:AbortSignal.timeout(60000) });
+      const isDanbooru = url.hostname === "donmai.us" || url.hostname.endsWith(".donmai.us");
+      const isPixiv = url.hostname.endsWith("pximg.net") || current.source === 'pixiv';
+      if (!isDanbooru && !isPixiv) throw Error("No valid large image URL");
+      const headers = { "User-Agent": "DFlow/0.1 (local reverse cache)" };
+      if (isPixiv) headers["Referer"] = "https://www.pixiv.net/";
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(60000) });
       if (!response.ok) throw Error(`HTTP ${response.status}`);
       const type = (response.headers.get("content-type") || "").split(";")[0];
       const ext = {"image/jpeg":"jpg", "image/png":"png", "image/webp":"webp", "image/gif":"gif"}[type];
@@ -593,9 +868,13 @@ async function withImageSlot(res, job) {
 app.get("/api/image", async (req, res) => {
   try {
     const url = new URL(String(req.query.url || ""));
-    if (url.protocol !== "https:" || (url.hostname !== "donmai.us" && !url.hostname.endsWith(".donmai.us"))) return res.status(400).json({error:"Invalid image URL"});
+    const isDanbooru = (url.protocol === "https:" || url.protocol === "http:") && (url.hostname === "donmai.us" || url.hostname.endsWith(".donmai.us"));
+    const isPixiv = (url.protocol === "https:" || url.protocol === "http:") && (url.hostname.endsWith("pximg.net"));
+    if (!isDanbooru && !isPixiv) return res.status(400).json({error:"Invalid image URL"});
     await withImageSlot(res, async () => {
-      const response = await fetch(url, {headers:{"User-Agent":"DFlow/0.1 (local image browser)"}, signal:AbortSignal.timeout(30000)});
+      const headers = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" };
+      if (isPixiv) headers["Referer"] = "https://www.pixiv.net/";
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
       if (response.status === 420 || response.status === 429) {
         imageCooldownAt = Math.max(imageCooldownAt, Date.now() + Math.min(120000, Math.max(10000, retryAfterMs(response.headers.get("retry-after")))));
         res.set("Retry-After", String(Math.ceil((imageCooldownAt - Date.now()) / 1000)));
@@ -609,6 +888,113 @@ app.get("/api/image", async (req, res) => {
     });
   } catch (error) {
     if (!res.headersSent && !res.destroyed) res.status(502).json({error:"Image proxy failed", detail:error.message});
+  }
+});
+
+// Pixiv APIs: Rankings and Search
+app.get("/api/pixiv/ranking", async (req, res) => {
+  try {
+    const mode = String(req.query.mode || "daily");
+    const page = String(Math.max(1, Number(req.query.page) || 1));
+    const url = `https://www.pixiv.net/ranking.php?mode=${encodeURIComponent(mode)}&format=json&p=${page}`;
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Referer": "https://www.pixiv.net/",
+      "Accept": "application/json"
+    };
+    if (sharedState.account.pixivCookie) {
+      headers["Cookie"] = sharedState.account.pixivCookie;
+    }
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
+    if (!response.ok) {
+      return res.status(response.status).json({ error: `Pixiv ranking HTTP ${response.status}` });
+    }
+    const data = await response.json();
+    const contents = Array.isArray(data?.contents) ? data.contents : [];
+    const posts = contents.map(item => {
+      const isR18 = item.illust_content_type?.sexual === 1 || item.x_restrict === 1;
+      const isR18G = item.illust_content_type?.sexual === 2 || item.x_restrict === 2;
+      const rating = isR18G ? "e" : isR18 ? "e" : "g";
+      const thumb = String(item.url || "");
+      const large = thumb.replace(/\/c\/[0-9x_]+\/img-master\//, "/img-master/");
+      return {
+        id: `px_${item.illust_id}_p0`,
+        source: "pixiv",
+        pixiv_id: item.illust_id,
+        title: item.title,
+        author: item.user_name,
+        user_id: item.user_id,
+        tags: item.tags || [],
+        tag_string: (item.tags || []).join(" "),
+        tag_string_general: (item.tags || []).join(" "),
+        preview_file_url: thumb,
+        large_file_url: large,
+        file_url: large,
+        image_width: Number(item.width) || 1200,
+        image_height: Number(item.height) || 1600,
+        page_count: Number(item.illust_page_count) || 1,
+        rating,
+        rating_count: item.rating_count,
+        view_count: item.view_count,
+        created_at: item.date || new Date().toISOString()
+      };
+    });
+    res.json(posts);
+  } catch (error) {
+    res.status(502).json({ error: "获取 Pixiv 榜单失败", detail: error.message });
+  }
+});
+
+app.get("/api/pixiv/search", async (req, res) => {
+  try {
+    const word = String(req.query.word || "").trim();
+    if (!word) return res.json([]);
+    const page = String(Math.max(1, Number(req.query.page) || 1));
+    const url = `https://www.pixiv.net/ajax/search/artworks/${encodeURIComponent(word)}?word=${encodeURIComponent(word)}&order=date_d&mode=all&p=${page}&s_mode=s_tag_full&type=all`;
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Referer": "https://www.pixiv.net/",
+      "Accept": "application/json"
+    };
+    if (sharedState.account.pixivCookie) {
+      headers["Cookie"] = sharedState.account.pixivCookie;
+    }
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
+    if (!response.ok) {
+      return res.status(response.status).json({ error: `Pixiv 搜索 HTTP ${response.status}` });
+    }
+    const data = await response.json();
+    const rawList = data?.body?.illustManga?.data || [];
+    const posts = rawList.filter(item => item.id && item.url).map(item => {
+      const isR18 = item.xRestrict === 1;
+      const isR18G = item.xRestrict === 2;
+      const rating = isR18G ? "e" : isR18 ? "e" : "g";
+      const thumb = String(item.url || "");
+      const large = thumb.replace(/\/c\/[0-9x_]+\/img-master\//, "/img-master/");
+      return {
+        id: `px_${item.id}_p0`,
+        source: "pixiv",
+        pixiv_id: item.id,
+        title: item.title,
+        author: item.userName,
+        user_id: item.userId,
+        tags: item.tags || [],
+        tag_string: (item.tags || []).join(" "),
+        tag_string_general: (item.tags || []).join(" "),
+        preview_file_url: thumb,
+        large_file_url: large,
+        file_url: large,
+        image_width: Number(item.width) || 1200,
+        image_height: Number(item.height) || 1600,
+        page_count: Number(item.pageCount) || 1,
+        rating,
+        bookmark_count: item.bookmarkCount,
+        created_at: item.createDate || new Date().toISOString()
+      };
+    });
+    res.json(posts);
+  } catch (error) {
+    res.status(502).json({ error: "Pixiv 搜索失败", detail: error.message });
   }
 });
 // Local imported PNGs and their parsed generation metadata are independent of favorites.
