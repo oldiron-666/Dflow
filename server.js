@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { inspectPng } from "./metadata.js";
+import { presetDefaults, validatePresets, PRESET_STORE, readPresetLibrary, savePresetLibrary } from "./presets.js";
 import { fileURLToPath } from "node:url";
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -19,8 +20,61 @@ const ORIGINAL_IMAGE_DIR = path.join(DATA_DIR, "favorites", "original");
 const PENDING_IMAGE_DIR = path.join(DATA_DIR, "favorites", "pending");
 const COMPLETED_IMAGE_DIR = path.join(DATA_DIR, "favorites", "completed");
 const WORDED_IMAGE_DIR = path.join(DATA_DIR, "favorites", "worded");
-const PRESET_NAMES = ["动作扩写", "艺术导演扩写", "巨构提示词", "动漫专用", "瑶光真人", "通用扩写"];
-const VALID_PRESETS = new Set([...PRESET_NAMES, "随机"]);
+const PRESET_FILE = path.join(DATA_DIR, PRESET_STORE);
+function readPresets() {
+  try { return readPresetLibrary(DATA_DIR); }
+  catch (error) {
+    // Migrate the old combined JSON once. Never delete it: it is a safety backup.
+    if (fs.existsSync(path.join(DATA_DIR, 'mcp-presets', 'config.json'))) {
+      console.error('读取预设文件夹失败，未覆盖文件：', error.message);
+      return presetDefaults();
+    }
+    try {
+      const legacy = validatePresets(JSON.parse(fs.readFileSync(PRESET_FILE, 'utf8')));
+      return savePresetLibrary(DATA_DIR, legacy);
+    } catch { return presetDefaults(); }
+  }
+}
+let presets = readPresets();
+const expansionNames = () => presets.expansion.map(x => x.name);
+const validExpansion = name => name === '随机' || expansionNames().includes(name);
+const validReverse = name => presets.reverse.some(x => x.name === name);
+const chosenExpansion = name => validExpansion(name) ? name : presets.defaultExpansion;
+const chosenReverse = name => validReverse(name) ? name : presets.defaultReverse;
+const mcpSessions = new Map();
+const localRequest = req => ['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.ip);
+app.get('/api/mcp/sessions', (req, res) => {
+  if (!localRequest(req)) return res.status(403).json({error:'仅本机可管理 MCP 连接'});
+  const now=Date.now();
+  res.json([...mcpSessions.values()].filter(x=>!x.revoked && now-x.seenAt<20000)
+    .map(({id,name,version,since,seenAt})=>({id,name,version,since,seenAt})));
+});
+app.post('/api/mcp/sessions', (req,res) => {
+  if (!localRequest(req)) return res.sendStatus(403);
+  const id=crypto.randomUUID();
+  mcpSessions.set(id,{id,name:String(req.body?.name||'未知 Agent').slice(0,80),version:String(req.body?.version||'').slice(0,40),since:Date.now(),seenAt:Date.now(),revoked:false});
+  res.json({id});
+});
+app.post('/api/mcp/sessions/:id/heartbeat', (req,res) => {
+  if (!localRequest(req)) return res.sendStatus(403);
+  const session=mcpSessions.get(req.params.id);
+  if (!session || session.revoked) return res.sendStatus(410);
+  session.seenAt=Date.now(); res.json({ok:true});
+});
+app.delete('/api/mcp/sessions/:id', (req,res) => {
+  if (!localRequest(req)) return res.sendStatus(403);
+  const session=mcpSessions.get(req.params.id);
+  if (!session) return res.sendStatus(404);
+  session.revoked=true;res.json({ok:true});
+});
+app.get('/api/mcp/setup', (req,res)=>{if(!localRequest(req))return res.sendStatus(403);res.json({command:process.execPath,args:[path.join(__dirname,'mcp-server.js')],port:PORT});});
+app.get('/api/mcp/presets', (_req,res)=>res.json(presets));
+app.put('/api/mcp/presets', (req,res)=>{
+  try {
+    const next=validatePresets(req.body);
+    presets=savePresetLibrary(DATA_DIR,next);res.json(presets);
+  } catch(error) {res.status(400).json({error:error.message});}
+});
 const favoriteFolderOf = post => ["original", "pending", "worded", "completed"].includes(post.folder) ? post.folder : (post.completed ? "completed" : "original");
 const defaultSharedState = () => ({
   account: {
@@ -95,7 +149,8 @@ function cleanFavorite(post) {
     created_at: String(post.created_at || ""),
     completed: favoriteFolderOf(post) === "completed",
     folder: favoriteFolderOf(post),
-    preset: VALID_PRESETS.has(post.preset) ? post.preset : "动漫专用",
+    preset: chosenExpansion(post.preset),
+    reversePreset: chosenReverse(post.reversePreset),
     autoEnabled: post.autoEnabled !== false,
     queueOrder: Math.max(0, Number(post.queueOrder) || 0),
     prompt: String(post.prompt || "").slice(0, 100000),
@@ -476,7 +531,7 @@ app.put("/api/favorites", (req, res) => {
   sharedState.favorites = values.map(item => {
     const prior = oldById.get(String(item?.id));
     return cleanFavorite(prior ? { ...item, folder: prior.folder, completed: prior.completed,
-      preset: prior.preset, autoEnabled: prior.autoEnabled, queueOrder: prior.queueOrder, prompt: prior.prompt,
+      preset: prior.preset, reversePreset:prior.reversePreset, autoEnabled: prior.autoEnabled, queueOrder: prior.queueOrder, prompt: prior.prompt,
       resolvedPreset: prior.resolvedPreset, customInstruction: prior.customInstruction, reverseStatus: prior.reverseStatus,
       reverseError: prior.reverseError, cacheStatus: prior.cacheStatus,
       cacheFile: prior.cacheFile, cacheError: prior.cacheError, reverseStartedAt: prior.reverseStartedAt, wordedAt: prior.wordedAt } : item);
@@ -578,8 +633,12 @@ app.patch("/api/favorites/:id", (req, res) => {
   }
   if (body.customInstruction !== undefined) item.customInstruction = String(body.customInstruction || "").slice(0,4000);
   if (body.preset !== undefined) {
-    if (!VALID_PRESETS.has(body.preset)) return res.status(400).json({error:"Invalid preset"});
+    if (!validExpansion(body.preset)) return res.status(400).json({error:"Invalid preset"});
     item.preset = body.preset;
+  }
+  if (body.reversePreset !== undefined) {
+    if (!validReverse(body.reversePreset)) return res.status(400).json({error:"Invalid reverse preset"});
+    item.reversePreset = body.reversePreset;
   }
   if (typeof body.autoEnabled === "boolean") {
     if (body.autoEnabled && !item.autoEnabled && item.folder === "pending") {
@@ -599,7 +658,7 @@ app.patch("/api/favorites/:id", (req, res) => {
 app.get("/api/reverse/queue", (_req, res) => {
   const pending = sharedState.favorites.filter(item => item.folder === "pending").sort((a,b) => (a.queueOrder || Infinity) - (b.queueOrder || Infinity));
   const manual=readWordIndex().filter(item=>item.folder==='pending');
-  const all=[...pending.map(item=>({id:item.id,preset:item.preset,autoEnabled:item.autoEnabled,queueOrder:item.queueOrder,reverseStatus:item.reverseStatus,cacheStatus:item.cacheStatus,cacheError:item.cacheError,reverseError:item.reverseError,customInstruction:item.customInstruction,hasPrompt:Boolean(item.prompt),imagePath:item.cacheStatus==='ready'?imagePath(item):null})),...manual.map(item=>({id:item.id,preset:item.preset||'动漫专用',autoEnabled:item.autoEnabled!==false,queueOrder:item.queueOrder||0,reverseStatus:item.reverseStatus||'idle',cacheStatus:item.imageExt?'ready':'error',cacheError:'',reverseError:item.reverseError||'',customInstruction:'',hasPrompt:Boolean(item.positive),imagePath:item.imageExt?path.join(WORDED_IMAGE_DIR,item.id+'.'+item.imageExt):null}))];
+  const all=[...pending.map(item=>({id:item.id,preset:item.preset,reversePreset:chosenReverse(item.reversePreset),autoEnabled:item.autoEnabled,queueOrder:item.queueOrder,reverseStatus:item.reverseStatus,cacheStatus:item.cacheStatus,cacheError:item.cacheError,reverseError:item.reverseError,customInstruction:item.customInstruction,hasPrompt:Boolean(item.prompt),imagePath:item.cacheStatus==='ready'?imagePath(item):null})),...manual.map(item=>({id:item.id,preset:chosenExpansion(item.preset),reversePreset:chosenReverse(item.reversePreset),autoEnabled:item.autoEnabled!==false,queueOrder:item.queueOrder||0,reverseStatus:item.reverseStatus||'idle',cacheStatus:item.imageExt?'ready':'error',cacheError:'',reverseError:item.reverseError||'',customInstruction:'',hasPrompt:Boolean(item.positive),imagePath:item.imageExt?path.join(WORDED_IMAGE_DIR,item.id+'.'+item.imageExt):null}))];
   res.json({total:all.length, withoutPrompt:all.filter(item=>!item.hasPrompt).length,
     eligible:all.filter(item=>item.autoEnabled&&item.cacheStatus==='ready'&&item.reverseStatus==='idle').length,items:all});
 });
@@ -610,26 +669,26 @@ app.post("/api/reverse/next", (_req, res) => {
     const list=readWordIndex(),manual=list.filter(x=>x.folder==='pending'&&x.autoEnabled!==false&&x.imageExt&&(!x.reverseStatus||x.reverseStatus==='idle')).sort((a,b)=>(a.queueOrder||0)-(b.queueOrder||0))[0];
     if(!manual)return res.json({item:null});
     manual.reverseStatus='processing';saveWordIndex(list);
-    return res.json({item:{id:manual.id,preset:manual.preset||'动漫专用',customInstruction:'',imagePath:path.join(WORDED_IMAGE_DIR,manual.id+'.'+manual.imageExt)}});
+    return res.json({item:{id:manual.id,preset:chosenExpansion(manual.preset),reversePreset:chosenReverse(manual.reversePreset),customInstruction:'',imagePath:path.join(WORDED_IMAGE_DIR,manual.id+'.'+manual.imageExt)}});
   }
   item.reverseStatus = "processing"; item.reverseError = ""; item.reverseStartedAt = new Date().toISOString();
   writeSharedState();
-  res.json({item:{id:item.id, preset:item.preset, customInstruction:item.customInstruction, imagePath:imagePath(item)}});
+  res.json({item:{id:item.id, preset:item.preset, reversePreset:chosenReverse(item.reversePreset), customInstruction:item.customInstruction, imagePath:imagePath(item)}});
 });
 app.post("/api/reverse/:id/result", (req, res) => {
   const item = favoriteById(req.params.id);
   if(!item){
     const list=readWordIndex(),manual=list.find(x=>x.id===req.params.id);
     if(!manual||manual.folder!=='pending'||manual.reverseStatus!=='processing')return res.status(409).json({error:'Item is not processing in the queue'});
-    const prompt=String(req.body?.prompt||'').trim(),preset=String(req.body?.resolvedPreset||manual.preset||'动漫专用');
-    if(!PRESET_NAMES.includes(preset)||(manual.preset!=='随机'&&preset!==(manual.preset||'动漫专用')))return res.status(400).json({error:'Preset mismatch'});
+    const prompt=String(req.body?.prompt||'').trim(),preset=String(req.body?.resolvedPreset||chosenExpansion(manual.preset));
+    if(!expansionNames().includes(preset)||(manual.preset!=='随机'&&preset!==(chosenExpansion(manual.preset))))return res.status(400).json({error:'Preset mismatch'});
     if(prompt.length<(preset==='瑶光真人'?45:250))return res.status(422).json({error:'Prompt too short'});
     manual.positive=prompt.slice(0,100000);manual.folder='worded';manual.wordedAt=new Date().toISOString();manual.autoEnabled=false;manual.reverseStatus='success';manual.reverseError='';saveWordIndex(list);return res.json({ok:true,item:manual});
   }
   if (!item || item.folder !== "pending" || !item.autoEnabled || item.reverseStatus !== "processing") return res.status(409).json({error:"Item is not processing in the queue"});
   const prompt = String(req.body?.prompt || "").trim();
   const preset = String(req.body?.resolvedPreset || item.preset);
-  if (!PRESET_NAMES.includes(preset) || (item.preset !== "随机" && preset !== item.preset)) return res.status(400).json({error:"Preset mismatch"});
+  if (!expansionNames().includes(preset) || (item.preset !== "随机" && preset !== item.preset)) return res.status(400).json({error:"Preset mismatch"});
   const minimum = preset === "瑶光真人" ? 45 : 250;
   if (prompt.length < minimum) return res.status(422).json({error:`Prompt too short (minimum ${minimum} characters)`});
   item.prompt = prompt.slice(0, 100000); item.resolvedPreset = preset;
@@ -849,11 +908,11 @@ let imageNextAt = 0;
 let imageCooldownAt = 0;
 const imageWaiters = [];
 async function withImageSlot(res, job) {
-  if (imageActive >= 4) await new Promise(resolve => imageWaiters.push(resolve));
+  if (imageActive >= 6) await new Promise(resolve => imageWaiters.push(resolve));
   imageActive++;
   try {
     const startAt = Math.max(Date.now(), imageNextAt, imageCooldownAt);
-    imageNextAt = startAt + 350;
+    imageNextAt = startAt + 120;
     const wait = startAt - Date.now();
     if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
     const cooldown = imageCooldownAt - Date.now();
@@ -872,7 +931,9 @@ app.get("/api/image", async (req, res) => {
     const isPixiv = (url.protocol === "https:" || url.protocol === "http:") && (url.hostname.endsWith("pximg.net"));
     if (!isDanbooru && !isPixiv) return res.status(400).json({error:"Invalid image URL"});
     await withImageSlot(res, async () => {
-      const headers = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" };
+      // The Danbooru CDN challenges the generic spoofed Chrome UA with HTTP 403.
+      // Identify our proxy instead; Pixiv still requires its own referer.
+      const headers = { "User-Agent": isDanbooru ? "DFlow/0.1" : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" };
       if (isPixiv) headers["Referer"] = "https://www.pixiv.net/";
       const response = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
       if (response.status === 420 || response.status === 429) {
@@ -906,10 +967,16 @@ app.get("/api/pixiv/ranking", async (req, res) => {
       headers["Cookie"] = sharedState.account.pixivCookie;
     }
     const response = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
+    if (response.status === 404 && Number(page) > 1) {
+      // Pixiv returns HTTP 404 after the last ranking page, not an empty JSON list.
+      res.set("X-Pixiv-Has-More", "false");
+      return res.json([]);
+    }
     if (!response.ok) {
       return res.status(response.status).json({ error: `Pixiv ranking HTTP ${response.status}` });
     }
     const data = await response.json();
+    if (data?.next === false) res.set("X-Pixiv-Has-More", "false");
     const contents = Array.isArray(data?.contents) ? data.contents : [];
     const posts = contents.map(item => {
       const isR18 = item.illust_content_type?.sexual === 1 || item.x_restrict === 1;
@@ -1033,12 +1100,18 @@ app.patch('/api/worded/entries/:id',(req,res)=>{
 app.patch('/api/worded/state/:id',(req,res)=>{
   const list=readWordIndex(), item=list.find(x=>x.id===req.params.id);
   if(!item)return res.status(404).json({error:'有词卡片不存在'});
-  const folder=req.body?.folder;
+  const folder=req.body?.folder ?? item.folder;
   if(!['worded','pending','completed'].includes(folder))return res.status(400).json({error:'无效目录'});
   if(folder==='pending'&&!item.imageExt)return res.status(409).json({error:'请先在提示词窗口粘贴图片'});
-  item.folder=folder;item.autoEnabled=folder==='pending';
-  item.reverseStatus=folder==='pending'?'idle':'success';
-  item.queueOrder=folder==='pending'?Date.now():0;
+  if(req.body?.preset !== undefined && !validExpansion(req.body.preset))return res.status(400).json({error:'无效扩写预设'});
+  if(req.body?.reversePreset !== undefined && !validReverse(req.body.reversePreset))return res.status(400).json({error:'无效反推预设'});
+  if(req.body?.preset !== undefined)item.preset=req.body.preset;
+  if(req.body?.reversePreset !== undefined)item.reversePreset=req.body.reversePreset;
+  if(folder!==item.folder){
+    item.folder=folder;item.autoEnabled=folder==='pending';
+    item.reverseStatus=folder==='pending'?'idle':'success';
+    item.queueOrder=folder==='pending'?Date.now():0;
+  }
   saveWordIndex(list);res.json(item);
 });
 app.post('/api/worded/entries',(req,res)=>{
@@ -1048,7 +1121,7 @@ app.post('/api/worded/entries',(req,res)=>{
   if(!summary && !req.body?.hasImage)return res.status(400).json({error:'请粘贴图片或填写概述'});
   const item={id:crypto.randomUUID(),name:'手写提示词',createdAt:new Date().toISOString(),source:'手写',positive,
     summary,model:'',negative:'',loras:[],cfg:null,steps:null,sampler:'',scheduler:'',seed:null,denoise:null,
-    width:0,height:0,imageExt:'',folder:'worded',autoEnabled:false,queueOrder:0,preset:'动漫专用',reverseStatus:'success'};
+    width:0,height:0,imageExt:'',folder:'worded',autoEnabled:false,queueOrder:0,preset:presets.defaultExpansion,reversePreset:presets.defaultReverse,reverseStatus:'success'};
   const list=readWordIndex();list.unshift(item);saveWordIndex(list);res.status(201).json(item);
 });
 app.put('/api/worded/images/:id',express.raw({type:['image/png','image/jpeg','image/webp'],limit:'60mb'}),(req,res)=>{

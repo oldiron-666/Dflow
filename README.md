@@ -238,6 +238,7 @@ DFlow 内置专属的「元数据库 (Metadata)」模块，彻底解决 AI 创�
 dflow/
 ├── data/                         # 本地数据目录 (自动生成，已加入 .gitignore)
 │   ├── dflow-state.json          # 核心状态：收藏列表、反推进度、偏好、账号、翻译配置
+│   ├── mcp-presets/              # 本机反推/扩写预设文件夹及 config.json（不上传 Git）
 │   ├── favorites/pending/        # 待反推高清图临时缓存
 │   ├── favorites/worded/         # 有词卡片图片与索引
 │   ├── favorites/completed/      # 已完成释放的高清原图归档
@@ -251,6 +252,9 @@ dflow/
 │   └── reverse-cli.mjs           # AI Agent / Codex 自动化反推命令行桥接脚本
 ├── .github/workflows/
 │   └── build-apk.yml             # 自动化移动端 APK 构建流水线
+├── mcp-server.js                # 本机 stdio MCP 服务
+├── reverse-workflow.js          # MCP 内置两阶段反推流程
+├── presets/通用扩写.txt         # GitHub 默认扩写预设
 ├── metadata.js                   # 纯原生 PNG Chunk 解码与 ComfyUI/SD 参数提取核心库
 ├── server.js                     # 服务端主入口（API 路由、防限流节流、翻译中继）
 ├── package.json                  # 项目配置 (Node ES Module, Express 5.x)
@@ -333,12 +337,23 @@ npm run dev
 
 ---
 
+### 本机 MCP、两阶段预设与 Agent 管理
+
+DFlow 提供本机 stdio MCP，供一个视觉 Agent 逐张处理待反推区；它**不自行调用 AI 或自动识图**。在顶部「登录 Dflow / Pflow」→「MCP 设置」（位于翻译引擎配置后）可复制当前电脑的连接 JSON，查看连接中的 Agent 并断开当前会话。先运行 `npm start`，再将配置粘贴到 Agent 客户端；具体工具与参数见 [MCP.md](MCP.md)。会话列表/断开仅在运行 DFlow 的电脑上可用，不是远程 Agent 控制台。客户端若自动重连，断开后可能再次出现。
+
+反推采用固定顺序：**读取待反推本地高清图 → 反推预设（观察、区分事实与推测）→ 扩写预设（生成最终提示词）→ 写回有词区**。MCP 的 `claim_next_pending` 会附带本图两阶段的完整流程和预设内容；还提供 `get_reverse_workflow` 工具及 `dflow_reverse` MCP prompt。错误会留在待反推区并显示原因。待反推卡片分别有反推和扩写两个下拉；预设可在 MCP 设置中新增、粘贴/导入 `.txt` 或 `.md`、编辑、删除及设置默认。修改后点击「保存预设」才生效。
+
+GitHub 仓库只附带 `presets/通用扩写.txt` 这一种**扩写预设**；内置的通用反推流程写在 `reverse-workflow.js`。你在设置中管理的其他预设保存在被 `.gitignore` 排除的 `data/mcp-presets/`，**不会随 Git 上传**。当前本机的 1 个反推预设和 6 个扩写预设仅来自 `D:\Download\Documents\krea2-prompt-suite.zip`，通用反推为 ZIP 中的 V2 版，换电脑需自己备份/复制。旧的 CLI 方式仍可使用，但不会提供 MCP 的完整两阶段预设正文。
+
+---
+
 ### 2. AI 提示词反推自动化流程 (搭配 Krea2 Skill)
 
 1. **移入待反推**：刷图时点击卡片非图片区的 **`AI`** 按钮移入「待反推」；
 2. **后台缓存大图**：服务端在后台串行下载高清原图至 `data/favorites/pending/`（卡片亮黄灯/绿灯指示）；
 3. **唤醒 AI 助手执行反推**：
-   - 搭配配套的 Krea2 通用版 Skill，AI Agent 自动运行 `node scripts/reverse-cli.mjs status` 探测队列；
+   - 推荐使用本机 MCP 的 `list_pending`、`claim_next_pending`、`read_pending_image`，先执行反推预设，再执行扩写预设；
+   - 原命令行方式仍可用：搭配配套 Skill，AI Agent 运行 `node scripts/reverse-cli.mjs status` 探测队列；
    - 逐张调用 `node scripts/reverse-cli.mjs next` 领取任务；
    - 观察本地高清缓存图，严格区分客观事实与合理推测，生成高质量扩写提示词；
    - 调用 `node scripts/reverse-cli.mjs complete <ID> <PROMPT_FILE> 通用扩写` 回写系统；
