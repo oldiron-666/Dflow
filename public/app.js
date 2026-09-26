@@ -12,9 +12,22 @@ const ratingNames = { g: '全年龄', s: '敏感', q: '较敏感', e: '成人' }
 const reversePresets = ['动作扩写', '艺术导演扩写', '随机', '巨构提示词', '瑶光真人', '通用扩写', '动漫专用'];
 const folderName = {original:'原始收藏', pending:'待反推', worded:'有词区', completed:'已完成', metadata:'元数据库'};
 const postFolder = post => post.folder || (post.completed ? 'completed' : 'original');
-const state = { columns: [], heights: [] };
+const state = { columns: [], heights: [], ordered: false };
 const selectedPopularTags = new Set();
 
+const HEART_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
+const HEART_OUTLINE_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>';
+const RELEASE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="18" y2="12"></line><polyline points="12 6 18 12 12 18"></polyline></svg>';
+
+const pixivModeMap = {
+  'pixiv-daily': 'daily',
+  'pixiv-weekly': 'weekly',
+  'pixiv-monthly': 'monthly',
+  'pixiv-ai': 'daily_ai',
+  'pixiv-r18': 'daily_r18'
+};
+
+let station = localStorage.getItem('dflow_station') || 'dflow';
 let previewPost = null;
 let previewCard = null;
 let mode = 'latest';
@@ -78,14 +91,23 @@ function resetColumns() {
   gallery.innerHTML = '';
   state.columns = [];
   state.heights = [];
+  state.ordered = mode === 'favorites' && (favoriteFolder === 'worded' || favoriteFolder === 'completed');
+  gallery.classList.toggle('ordered-gallery', state.ordered);
   const count = mode === 'favorites' && favoriteFolder === 'pending'
     ? Math.min(columnCount(), innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 2 : 4)
-    : (mode === 'favorites' && favoriteFolder === 'worded') || mode === 'metadata'
-      ? Math.min(columnCount(), innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 2 : 4)
-    : mode === 'favorites' && favoriteFolder === 'completed'
-      ? Math.min(columnCount(), innerWidth <= 760 ? 2 : innerWidth <= 1100 ? 4 : 8)
+    : (mode === 'favorites' && (favoriteFolder === 'worded' || favoriteFolder === 'completed')) || mode === 'metadata'
+      ? Math.min(columnCount(), innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 3 : 5)
       : columnCount();
   gallery.style.setProperty('--gallery-cols', count);
+  if (state.ordered) {
+    const styles = getComputedStyle(gallery);
+    const horizontalPadding = (parseFloat(styles.paddingLeft) || 0) + (parseFloat(styles.paddingRight) || 0);
+    const gap = parseFloat(styles.columnGap || styles.gap) || 8;
+    const contentWidth = Math.max(1, gallery.clientWidth - horizontalPadding);
+    const cardSize = Math.max(1, (contentWidth - gap * (count - 1)) / count);
+    gallery.style.setProperty('--ordered-card-size', cardSize + 'px');
+    return;
+  }
   for (let i = 0; i < count; i++) {
     const column = document.createElement('div');
     column.className = 'column';
@@ -125,11 +147,14 @@ const searchOrderByMode = {
   rank: 'age:<1month order:rank',
   mpixels: 'age:<1month order:mpixels'
 };
+function isPixivMode(value = mode) {
+  return ['pixiv-daily', 'pixiv-weekly', 'pixiv-monthly', 'pixiv-ai', 'pixiv-r18'].includes(value);
+}
 function isPopularMode(value = mode) {
   return value.startsWith('popular-');
 }
 function isPagedMode(value = mode) {
-  return value !== 'latest' && value !== 'viewed' && value !== 'favorites';
+  return isPixivMode(value) || (value !== 'latest' && value !== 'viewed' && value !== 'favorites' && value !== 'metadata');
 }
 function baseTags(includeOrder = true) {
   const tags = [];
@@ -189,6 +214,15 @@ async function requestPosts(url, signal) {
   throw Error('网络连接失败');
 }
 async function getPosts(tags, page, limit = 36, signal) {
+  if (station === 'pflow' && !['favorites', 'metadata'].includes(mode)) {
+    if (manualSearchTags) {
+      const p = page || 1;
+      return requestPosts(`/api/pixiv/search?word=${encodeURIComponent(manualSearchTags)}&page=${p}`, signal);
+    }
+    const pixMode = pixivModeMap[mode] || 'daily';
+    const p = page || 1;
+    return requestPosts(`/api/pixiv/ranking?mode=${encodeURIComponent(pixMode)}&page=${p}`, signal);
+  }
   if (isPopularMode()) {
     const scale = mode.slice('popular-'.length);
     const params = new URLSearchParams({ scale, limit: String(limit), tags });
@@ -267,7 +301,7 @@ function updateFavoriteCount() {
 function updateFavoriteButtons(id) {
   const active = isFavorite(id);
   document.querySelectorAll(`[data-favorite-id="${CSS.escape(String(id))}"]`).forEach(button => {
-    button.textContent = active ? '♥' : '♡';
+    button.innerHTML = active ? HEART_SVG : HEART_OUTLINE_SVG;
     button.classList.toggle('active', active);
     button.title = active ? '取消收藏' : '加入本地收藏';
     button.setAttribute('aria-label', button.title);
@@ -280,7 +314,8 @@ function favoriteVisibleItems() {
     .sort((a,b) => favoriteFolder === 'pending'
       ? Number(a.autoEnabled === false) - Number(b.autoEnabled === false) ||
         ((a.queueOrder || 999999) - (b.queueOrder || 999999))
-      : Number((b.image_width || 0) > (b.image_height || 0)) - Number((a.image_width || 0) > (a.image_height || 0)));
+      : (Number((b.image_width || 0) > (b.image_height || 0)) - Number((a.image_width || 0) > (a.image_height || 0))) ||
+        ((Date.parse(b.completedAt || b.wordedAt || b.created_at || '') || 0) - (Date.parse(a.completedAt || a.wordedAt || a.created_at || '') || 0)));
 }
 function refreshFavoriteGallery(preserveScroll = true) {
   if (mode !== 'favorites') return;
@@ -353,9 +388,9 @@ function updateCompletedButtons(id) {
   const item = readFavorites().find(entry => String(entry.id) === String(id));
   const done = Boolean(item?.completed);
   document.querySelectorAll(`[data-completed-id="${CSS.escape(String(id))}"]`).forEach(button => {
-    button.textContent = done ? '✓' : '○';
+    button.innerHTML = RELEASE_SVG;
     button.classList.toggle('active', done);
-    button.title = done ? '标记为未使用' : '标记为已使用';
+    button.title = done ? '移回原始收藏' : '释放至已完成';
     button.setAttribute('aria-label', button.title);
   });
 }
@@ -469,7 +504,9 @@ async function load(reset = false) {
     // 全选四级时每级只取 12 张，导致榜单一次只出现很少图片。
     const perRatingLimit = 36;
     let results;
-    if (mode === 'viewed') {
+    if (station === 'pflow' && !['favorites', 'metadata'].includes(mode)) {
+      results = [await getPosts('', pageNo, perRatingLimit, controller.signal)];
+    } else if (mode === 'viewed') {
       results = [await getPosts('', null, 100, controller.signal)];
     } else {
       // Resume an interrupted page from the last successful rating; never fetch
@@ -489,7 +526,7 @@ async function load(reset = false) {
     // API 的 tags 过滤偶尔会返回混合分级（尤其是榜单/缓存结果），
     // 前端再做一次硬过滤，避免取消勾选后仍出现其它颜色的分级圆点。
     const selectedRatings = new Set(ratings);
-    posts = posts.filter(post => selectedRatings.has(post.rating));
+    posts = posts.filter(post => selectedRatings.has(post.rating || 'g'));
     if (mode === 'viewed') posts = posts.filter(favoriteMatches);
     posts = posts.filter(post => post.preview_file_url || post.large_file_url || post.file_url);
     if (mode === 'latest') posts.sort((a, b) => b.id - a.id);
@@ -546,11 +583,12 @@ async function load(reset = false) {
       if (post.cacheStatus === 'error') card.classList.add('cache-failed');
       else if (post.cacheStatus !== 'ready') card.classList.add('cache-waiting');
     }
+    const isPixiv = post.source === 'pixiv' || String(post.id).startsWith('px_');
     const img = document.createElement('img');
     img.loading = 'lazy';
     img.decoding = 'async';
     img.src = mode === 'favorites' && post.cacheStatus === 'ready' ? `/api/reverse/image/${post.id}` : imageSrc(post.preview_file_url || post.large_file_url || post.file_url);
-    img.alt = `Danbooru #${post.id}`;
+    img.alt = post.title || (isPixiv ? `Pixiv #${post.pixiv_id || post.id}` : `Danbooru #${post.id}`);
     img.addEventListener('load', () => { img.classList.add('loaded'); queueNextLoad(); });
     img.addEventListener('error', () => {
       if (img.dataset.fallback !== '1' && post.large_file_url) {
@@ -558,13 +596,15 @@ async function load(reset = false) {
         img.src = imageSrc(post.large_file_url);
       }
     });
+
     const badge = document.createElement('span');
-    badge.className = `badge rating-${post.rating || 's'}`;
-    badge.title = `${ratingNames[post.rating] || post.rating || '未知'} · ${post.image_width || '?'}×${post.image_height || '?'}`;
+    badge.className = `badge rating-${post.rating || 'g'}`;
+    badge.title = `${ratingNames[post.rating] || post.rating || '全年龄'} · ${post.image_width || '?'}×${post.image_height || '?'}`;
+
     const favoriteButton = document.createElement('button');
     favoriteButton.className = 'favorite-button';
     favoriteButton.dataset.favoriteId = post.id;
-    favoriteButton.textContent = isFavorite(post.id) ? '♥' : '♡';
+    favoriteButton.innerHTML = isFavorite(post.id) ? HEART_SVG : HEART_OUTLINE_SVG;
     favoriteButton.classList.toggle('active', isFavorite(post.id));
     favoriteButton.title = isFavorite(post.id) ? '取消收藏' : '加入本地收藏';
     favoriteButton.setAttribute('aria-label', favoriteButton.title);
@@ -572,45 +612,69 @@ async function load(reset = false) {
       event.stopPropagation();
       toggleFavorite(post);
     };
-    let completedButton = null;
-    if (mode === 'favorites' && favoriteFolder === 'original') {
-      const ai = document.createElement('button');
-      ai.className = 'ai-button'; ai.textContent = 'AI'; ai.title = '移到待反推';
-      ai.onclick = event => { event.stopPropagation(); moveFavorite(post, 'pending'); };
-      card.append(ai);
+
+    if (mode === 'favorites') {
+      // 1. Top-left: Source badge [D] or [P]
+      const sourceBadge = document.createElement('span');
+      sourceBadge.className = `source-badge ${isPixiv ? 'source-pixiv' : 'source-danbooru'}`;
+      sourceBadge.textContent = isPixiv ? 'P' : 'D';
+      sourceBadge.title = isPixiv ? '来源：Pixiv' : '来源：Danbooru';
+      card.append(sourceBadge);
+
+      // 2. Top-right: Rating dot badge
+      card.append(badge);
+
       if (post.cacheStatus === 'error') {
         const failure = document.createElement('span'); failure.className = 'cache-failure-label';
         failure.textContent = '失败'; failure.title = post.cacheError || '高清缓存失败';
         card.append(failure);
       }
-      completedButton = document.createElement('button');
+
+      // 3. Bottom-right toolbar: [ AI ] -> [ 释放至已完成 ] -> [ ♥ 收藏 ]
+      const actions = document.createElement('div');
+      actions.className = 'card-actions-bar';
+
+      const ai = document.createElement('button');
+      ai.className = 'ai-button'; ai.textContent = 'AI'; ai.title = '移到待反推';
+      ai.onclick = event => { event.stopPropagation(); moveFavorite(post, 'pending'); };
+      actions.append(ai);
+
+      const completedButton = document.createElement('button');
       completedButton.className = 'completed-button';
       completedButton.dataset.completedId = post.id;
-      completedButton.onclick = event => { event.stopPropagation(); toggleCompleted(post); };
-      updateCompletedButtons(post.id);
-    }
-    card.append(img, badge, favoriteButton);
-    if (completedButton) {
+      completedButton.innerHTML = RELEASE_SVG;
       const done = Boolean(readFavorites().find(item => String(item.id) === String(post.id))?.completed);
-      completedButton.textContent = done ? '✓' : '○';
       completedButton.classList.toggle('active', done);
-      completedButton.title = done ? '标记为未使用' : '标记为已使用';
+      completedButton.title = done ? '移回原始收藏' : '释放至已完成';
       completedButton.setAttribute('aria-label', completedButton.title);
-      card.append(completedButton);
+      completedButton.onclick = event => { event.stopPropagation(); toggleCompleted(post); };
+      actions.append(completedButton);
+
+      actions.append(favoriteButton);
+      card.append(img, actions);
+    } else {
+      // Online gallery: Top-right rating dot, bottom-right ONLY favorite button
+      card.append(img, badge, favoriteButton);
     }
+
     card.oncontextmenu = event => showMenu(event, post);
     card.addEventListener('click', () => openLightbox(post, card,
       mode === 'favorites' && post.cacheStatus === 'ready' ? (img.currentSrc || img.src) : ''));
     const ratio = (post.image_height || 1) / (post.image_width || 1);
-    const index = state.heights.indexOf(Math.min(...state.heights));
-    state.columns[index].append(card);
-    state.heights[index] += ratio + .03;
+    appendRenderedCard(card, ratio + .03);
   }
+}
+function appendRenderedCard(card, weight = 1) {
+  if (state.ordered) { gallery.append(card); return; }
+  const index = state.heights.indexOf(Math.min(...state.heights));
+  state.columns[index].append(card); state.heights[index] += weight;
 }
 function renderReverseCard(post) {
   const pending = favoriteFolder === 'pending';
+  const isWordedOrCompleted = favoriteFolder === 'worded' || favoriteFolder === 'completed';
+  const isLandscape = Number(post.image_width || 0) > Number(post.image_height || 0);
   const card = document.createElement('article');
-  card.className = `reverse-card ${post.image_width > post.image_height ? 'landscape' : 'portrait'} ${pending && post.cacheStatus !== 'ready' ? 'uncached' : ''}`;
+  card.className = `reverse-card ${isLandscape ? 'landscape' : 'portrait'} ${pending && post.cacheStatus !== 'ready' ? 'uncached' : ''}`;
   card.dataset.reverseId = post.id;
   const image = document.createElement('img');
   image.loading = 'lazy'; image.alt = `Danbooru #${post.id}`;
@@ -624,13 +688,19 @@ function renderReverseCard(post) {
   const picture = document.createElement('div'); picture.className = 'reverse-picture'; picture.append(image);
   const width = Math.max(1, Number(post.image_width) || 1);
   const height = Math.max(1, Number(post.image_height) || 1);
-  // A square card reserves room for controls; near-square images may be cropped a little, never stretched.
   const imageShare = pending ? (width > height ? 62 : 55) : 60;
   if (width > height) picture.style.height = `${Math.min(imageShare, height / width * 100)}%`;
   else picture.style.width = `${Math.min(imageShare, width / height * 100)}%`;
+
   const panel = document.createElement('div'); panel.className = 'reverse-panel';
-  const copy = createPromptControl(post.prompt, {kind:'favorite', id:post.id, imageUrl:post.cacheStatus === 'ready' ? `/api/reverse/image/${post.id}` : image.src, onSaved: value => { post.prompt = value; refreshFavoriteGallery(true); }});
+  const copy = createPromptControl(post.prompt, {
+    kind: 'favorite',
+    id: post.id,
+    imageUrl: post.cacheStatus === 'ready' ? `/api/reverse/image/${post.id}` : image.src,
+    onSaved: value => { post.prompt = value; refreshFavoriteGallery(true); }
+  });
   if (!pending && !post.prompt) copy.hidden = true;
+
   if (pending) {
     card.classList.add('pending-card');
     const status = document.createElement('div'); status.className = 'reverse-status';
@@ -652,9 +722,10 @@ function renderReverseCard(post) {
       status.onclick = retry;
       status.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); retry(); } };
     }
-    status.append(lamp,label);
+    status.append(lamp, label);
+
     const queue = document.createElement('div'); queue.className = 'reverse-queue';
-    const queueLabel = document.createElement('span'); queueLabel.textContent = '反推队列';
+    const queueLabel = document.createElement('span'); queueLabel.textContent = '队列';
     const queueButton = document.createElement('button'); queueButton.type = 'button'; queueButton.className = `queue-button ${post.autoEnabled !== false ? 'active' : ''}`;
     queueButton.textContent = post.autoEnabled !== false ? String(post.queueOrder || '·') : '+';
     queueButton.setAttribute('aria-pressed', String(post.autoEnabled !== false));
@@ -666,59 +737,90 @@ function renderReverseCard(post) {
       try { await patchFavorite(post.id, {autoEnabled:post.autoEnabled === false}); refreshFavoriteGallery(true); }
       catch(error) { queueButton.disabled = false; toast(`更新队列失败：${error.message}`); }
     };
-    queue.append(queueLabel,queueButton);
-    const release = document.createElement('button'); release.type = 'button'; release.className = 'release-button'; release.textContent = '释放至已完成';
-    release.disabled = !post.prompt || post.cacheStatus !== 'ready';
-    release.title = release.disabled ? '需先完成反推和高清缓存' : '释放到已完成';
-    release.onclick = () => moveFavorite(post,'completed');
+    queue.append(queueLabel, queueButton);
+
     const picker = document.createElement('select'); picker.className = 'preset-picker'; picker.title = '反推预设';
-    picker.setAttribute('aria-label','反推预设');
+    picker.setAttribute('aria-label', '反推预设');
     for (const preset of reversePresets) {
       const option = document.createElement('option'); option.value = preset; option.textContent = preset;
       picker.append(option);
     }
     picker.value = post.preset || '动漫专用';
     picker.onchange = async () => {
-      try { await patchFavorite(post.id,{preset:picker.value}); }
+      try { await patchFavorite(post.id, {preset: picker.value}); }
       catch(error) { picker.value = post.preset || '动漫专用'; toast(`预设保存失败：${error.message}`); }
     };
+
     const actions = document.createElement('div'); actions.className = 'reverse-actions';
-    actions.append(status,queue,release);
-    const instruction = document.createElement('input'); instruction.className='reverse-instruction';
-    instruction.type='text'; instruction.maxLength=4000; instruction.placeholder='额外要求（与预设一起交给 AI）';
-    instruction.setAttribute('aria-label','额外反推要求'); instruction.value=post.customInstruction || '';
-    instruction.onchange=async()=>{try{await patchFavorite(post.id,{customInstruction:instruction.value});toast('额外要求已保存');}
-      catch(error){toast('保存失败：'+error.message)}};
-    panel.append(copy,actions,picker,instruction);
+    actions.append(status, queue, picker);
+
+    const instruction = document.createElement('input'); instruction.className = 'reverse-instruction';
+    instruction.type = 'text'; instruction.maxLength = 4000; instruction.placeholder = '额外要求（与预设一起交给 AI）';
+    instruction.setAttribute('aria-label', '额外反推要求'); instruction.value = post.customInstruction || '';
+    instruction.onchange = async () => {
+      try { await patchFavorite(post.id, {customInstruction: instruction.value}); toast('额外要求已保存'); }
+      catch(error) { toast('保存失败：' + error.message); }
+    };
+
+    panel.append(copy, actions, instruction);
   } else {
     panel.append(copy);
+
+    if (isWordedOrCompleted) {
+      const panelActions = document.createElement('div');
+      panelActions.className = `panel-actions-bar ${isLandscape ? 'horizontal' : 'vertical'}`;
+
+      const aiButton = document.createElement('button');
+      aiButton.type = 'button'; aiButton.className = 'ai-button'; aiButton.textContent = 'AI';
+      aiButton.title = '移回待反推重新反推';
+      aiButton.onclick = event => { event.stopPropagation(); moveFavorite(post, 'pending'); };
+
+      const completedButton = document.createElement('button');
+      completedButton.type = 'button';
+      completedButton.className = `completed-button ${favoriteFolder === 'completed' ? 'active' : ''}`;
+      completedButton.innerHTML = RELEASE_SVG;
+      completedButton.title = favoriteFolder === 'completed' ? '移回有词区' : '释放至已完成';
+      completedButton.onclick = event => {
+        event.stopPropagation();
+        moveFavorite(post, favoriteFolder === 'completed' ? 'worded' : 'completed');
+      };
+
+      const favoriteButton = document.createElement('button');
+      favoriteButton.type = 'button'; favoriteButton.className = 'favorite-button active';
+      favoriteButton.dataset.favoriteId = post.id; favoriteButton.innerHTML = HEART_SVG;
+      favoriteButton.title = '取消本地收藏';
+      favoriteButton.onclick = event => { event.stopPropagation(); toggleFavorite(post); };
+
+      panelActions.append(aiButton, completedButton, favoriteButton);
+      panel.append(panelActions);
+    }
   }
-  card.append(picture,panel);
-  const favoriteButton = document.createElement('button');
-  favoriteButton.type = 'button'; favoriteButton.className = 'favorite-button active';
-  favoriteButton.dataset.favoriteId = post.id; favoriteButton.textContent = '♥';
-  favoriteButton.title = '取消本地收藏'; favoriteButton.setAttribute('aria-label', favoriteButton.title);
-  favoriteButton.onclick = event => { event.stopPropagation(); toggleFavorite(post); };
-  const aiButton = document.createElement('button');
-  aiButton.type = 'button'; aiButton.className = 'ai-button'; aiButton.textContent = 'AI';
-  aiButton.title = pending ? '移回原始收藏' : '移回待反推重新反推';
-  aiButton.setAttribute('aria-label', aiButton.title);
-  aiButton.onclick = event => { event.stopPropagation(); moveFavorite(post, pending ? 'original' : 'pending'); };
-  const completedButton = document.createElement('button');
-  completedButton.type = 'button'; completedButton.className = `completed-button ${pending ? '' : 'active'}`;
-  completedButton.textContent = favoriteFolder === 'completed' ? '✓' : '○';
-  completedButton.title = favoriteFolder === 'completed' ? '取消完成，移回原始收藏' : '释放到已完成';
-  completedButton.setAttribute('aria-label', completedButton.title);
-  completedButton.disabled = favoriteFolder !== 'completed' && (!post.prompt || post.cacheStatus !== 'ready');
-  completedButton.onclick = event => { event.stopPropagation(); moveFavorite(post, favoriteFolder === 'completed' ? 'original' : 'completed'); };
-  picture.append(favoriteButton, aiButton, completedButton);
-  if(favoriteFolder==='worded') {
-    const remove=document.createElement('button');remove.className='worded-delete';remove.textContent='删除';remove.title='删除本地收藏及缓存';
-    remove.onclick=event=>{event.stopPropagation();if(confirm('删除此本地收藏及缓存？'))toggleFavorite(post)};card.append(remove);
+
+  card.append(picture, panel);
+
+  const isPixiv = post.source === 'pixiv' || String(post.id).startsWith('px_');
+  const sourceBadge = document.createElement('span');
+  sourceBadge.className = `source-badge ${isPixiv ? 'source-pixiv' : 'source-danbooru'}`;
+  sourceBadge.textContent = isPixiv ? 'P' : 'D';
+  sourceBadge.title = isPixiv ? '来源：Pixiv' : '来源：Danbooru';
+
+  const badge = document.createElement('span');
+  badge.className = `badge rating-${post.rating || 'g'}`;
+  badge.title = `${ratingNames[post.rating] || post.rating || '全年龄'}`;
+
+  picture.append(sourceBadge, badge);
+
+  if (pending) {
+    const favBtn = document.createElement('button');
+    favBtn.type = 'button'; favBtn.className = 'favorite-button active';
+    favBtn.dataset.favoriteId = post.id; favBtn.innerHTML = HEART_SVG;
+    favBtn.title = '取消本地收藏';
+    favBtn.onclick = event => { event.stopPropagation(); toggleFavorite(post); };
+    picture.append(favBtn);
   }
-  card.oncontextmenu=event=>showMenu(event,post);
-  const index = state.heights.indexOf(Math.min(...state.heights));
-  state.columns[index].append(card); state.heights[index] += 1;
+
+  card.oncontextmenu = event => showMenu(event, post);
+  appendRenderedCard(card);
 }
 function createPromptControl(initialPrompt, target) {
   let prompt = initialPrompt;
@@ -1107,17 +1209,30 @@ document.addEventListener('keydown', event => {
 });
 let activeManual = null;
 function showManualMenu(event, item) {
-  event.preventDefault();activePost=null;activeManual=item;
-  menu.querySelectorAll('[data-action]').forEach(button=>button.hidden=button.dataset.action!=='create-prompt');
+  event.preventDefault(); activePost = null; activeManual = item;
+  menu.querySelectorAll('[data-action]').forEach(button => {
+    button.hidden = button.dataset.action !== 'create-prompt' && button.dataset.action !== 'delete';
+  });
+  const delBtn = menu.querySelector('[data-action="delete"]');
+  if (delBtn) delBtn.textContent = '删除本地卡片';
   menu.classList.remove('hidden');
-  menu.style.left=`${Math.min(event.clientX,innerWidth-205)}px`;
-  menu.style.top=`${Math.min(event.clientY,innerHeight-190)}px`;
+  menu.style.left = `${Math.min(event.clientX, innerWidth - 205)}px`;
+  menu.style.top = `${Math.min(event.clientY, innerHeight - 190)}px`;
 }
 function showMenu(event, post) {
   event.preventDefault();
   activePost = post; activeManual = null;
-  menu.querySelectorAll('[data-action]').forEach(button=>button.hidden=false);
+  menu.querySelectorAll('[data-action]').forEach(button => button.hidden = false);
   menu.querySelector('[data-action="favorite"]').textContent = isFavorite(post.id) ? '取消本地收藏' : '加入本地收藏';
+  const delBtn = menu.querySelector('[data-action="delete"]');
+  if (delBtn) {
+    if (mode === 'favorites') {
+      delBtn.hidden = false;
+      delBtn.textContent = '从本地收藏移除';
+    } else {
+      delBtn.hidden = true;
+    }
+  }
   menu.classList.remove('hidden');
   menu.style.left = `${Math.min(event.clientX, innerWidth - 205)}px`;
   menu.style.top = `${Math.min(event.clientY, innerHeight - 190)}px`;
@@ -1155,6 +1270,22 @@ menu.onclick = async event => {
   if (!action || (!activePost && !activeManual)) return;
   menu.classList.add('hidden');
   try {
+    if (action === 'delete') {
+      if (activeManual) {
+        if (!confirm('确定删除此本地卡片及图片？')) return;
+        const res = await fetch(`/api/worded/entries/${encodeURIComponent(activeManual.id)}`, { method: 'DELETE' });
+        if (res.ok) {
+          toast('已删除卡片');
+          loadWordedGallery(true);
+        } else {
+          toast('删除失败');
+        }
+      } else if (activePost) {
+        if (!confirm('确定从本地收藏中移除此卡片？')) return;
+        await toggleFavorite(activePost);
+      }
+      return;
+    }
     if (action === 'favorite' && activePost) await toggleFavorite(activePost);
     if (action === 'create-prompt') {
       if(activeManual)showPromptDialog(activeManual.positive,{kind:'moveWorded',id:activeManual.id,imageUrl:activeManual.imageExt?`/api/worded/images/${encodeURIComponent(activeManual.id)}`:'',summary:activeManual.summary});
@@ -1289,42 +1420,179 @@ document.addEventListener('wheel', event => {
   setColumns(event.deltaY > 0 ? current - 1 : current + 1);
 }, { passive: false });
 
-document.querySelector('#testSettings').onclick = async () => {
-  const name = document.querySelector('#loginName').value.trim();
-  const key = document.querySelector('#loginKey').value.trim();
-  const status = document.querySelector('#loginStatus');
-  if (!name || !key) { status.textContent = '✕ 请同时填写账户名称和 API Key'; return; }
-  status.textContent = '正在测试…';
-  try {
-    const response = await fetch('/api/auth-test', { headers: { 'X-Danbooru-Username': name, 'X-Danbooru-Key': key } });
-    const detail = await response.json().catch(() => ({}));
-    status.textContent = detail.ok ? `✓ ${detail.message}` : `✕ ${detail.message || detail.error || `HTTP ${response.status}`}`;
-  } catch { status.textContent = '✕ 无法连接测试服务'; }
-};
+function updateStationUI() {
+  const switchBtn = document.querySelector('#stationSwitch');
+  const label = switchBtn?.querySelector('.station-label');
+  const searchInput = document.querySelector('#search');
+  const settingsBtn = document.querySelector('#settings');
+  
+  if (station === 'pflow') {
+    switchBtn?.classList.add('station-pflow');
+    switchBtn?.classList.remove('station-dflow');
+    if (label) label.textContent = 'Pflow';
+    document.querySelector('.nav-dflow')?.classList.add('hidden');
+    document.querySelector('.nav-pflow')?.classList.remove('hidden');
+    if (searchInput) searchInput.placeholder = '搜索 Pixiv 插画、作品、作者，例如：初音ミク 10000users入り';
+    if (settingsBtn) settingsBtn.textContent = '登录 Pflow';
+  } else {
+    switchBtn?.classList.add('station-dflow');
+    switchBtn?.classList.remove('station-pflow');
+    if (label) label.textContent = 'Dflow';
+    document.querySelector('.nav-dflow')?.classList.remove('hidden');
+    document.querySelector('.nav-pflow')?.classList.add('hidden');
+    if (searchInput) searchInput.placeholder = '搜索 Danbooru 标签、角色、作品，例如：blue_eyes rating:g';
+    if (settingsBtn) settingsBtn.textContent = '登录 Dflow';
+  }
+}
+
+function switchStation(next) {
+  const targetStation = next || (station === 'dflow' ? 'pflow' : 'dflow');
+  if (targetStation === station && next) return;
+  station = targetStation;
+  localStorage.setItem('dflow_station', station);
+  updateStationUI();
+
+  const dflowModes = new Set(['latest', 'popular-day', 'popular-week', 'popular-month', 'viewed', 'favcount', 'comment', 'upvotes', 'score', 'rank', 'mpixels']);
+  const pflowModes = new Set(['pixiv-daily', 'pixiv-weekly', 'pixiv-monthly', 'pixiv-ai', 'pixiv-r18']);
+
+  if (station === 'pflow' && dflowModes.has(mode)) {
+    selectMode('pixiv-daily');
+  } else if (station === 'dflow' && pflowModes.has(mode)) {
+    selectMode('latest');
+  } else {
+    load(true);
+  }
+}
+
+document.querySelector('#stationSwitch').onclick = () => switchStation();
+
+// Settings Dialog Tabs
+document.querySelectorAll('.settings-tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.settings-panel').forEach(p => p.classList.toggle('active', p.id === tab.dataset.tab));
+  };
+});
+
+document.querySelector('#closeSettingsHeader').onclick = () => document.querySelector('#settingsDialog').close();
+document.querySelector('#closeSettings').onclick = () => document.querySelector('#settingsDialog').close();
+
 document.querySelector('#settings').onclick = () => {
   const dialog = document.querySelector('#settingsDialog');
   document.querySelector('#loginName').value = localStorage.loginName || '';
   document.querySelector('#loginKey').value = localStorage.loginKey || '';
+  document.querySelector('#pixivCookie').value = localStorage.pixivCookie || '';
+  document.querySelector('#pixivRefreshToken').value = localStorage.pixivRefreshToken || '';
+  document.querySelector('#primaryTranslator').value = localStorage.primaryTranslator || 'deepl';
+  document.querySelector('#translateFallback').checked = localStorage.translateFallback !== 'false';
+  document.querySelector('#deeplKey').value = localStorage.deeplKey || '';
+  document.querySelector('#tencentSecretId').value = localStorage.tencentSecretId || '';
+  document.querySelector('#tencentSecretKey').value = localStorage.tencentSecretKey || '';
+  document.querySelector('#volcAccessKey').value = localStorage.volcAccessKey || '';
+  document.querySelector('#volcSecretKey').value = localStorage.volcSecretKey || '';
+  document.querySelector('#googleTranslateKey').value = localStorage.googleTranslateKey || '';
+
+  const targetTab = station === 'pflow' ? 'tabPixiv' : 'tabDanbooru';
+  document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === targetTab));
+  document.querySelectorAll('.settings-panel').forEach(p => p.classList.toggle('active', p.id === targetTab));
+
+  const loginStatus = document.querySelector('#loginStatus');
+  if (loginStatus) { loginStatus.textContent = ''; loginStatus.className = 'status-inline'; }
+  const translateStatus = document.querySelector('#translateStatus');
+  if (translateStatus) { translateStatus.textContent = ''; translateStatus.className = 'status-inline'; }
   dialog.showModal();
 };
-document.querySelector('#closeSettings').onclick = () => document.querySelector('#settingsDialog').close();
+
+document.querySelector('#testSettings').onclick = async () => {
+  const name = document.querySelector('#loginName').value.trim();
+  const key = document.querySelector('#loginKey').value.trim();
+  const status = document.querySelector('#loginStatus');
+  if (!name || !key) { status.textContent = '✕ 请同时填写账户名称和 API Key'; status.className = 'status-inline status-error'; return; }
+  status.textContent = '正在测试…'; status.className = 'status-inline';
+  try {
+    const response = await fetch('/api/auth-test', { headers: { 'X-Danbooru-Username': name, 'X-Danbooru-Key': key } });
+    const detail = await response.json().catch(() => ({}));
+    status.textContent = detail.ok ? `✓ ${detail.message}` : `✕ ${detail.message || detail.error || `HTTP ${response.status}`}`;
+    status.className = detail.ok ? 'status-inline status-success' : 'status-inline status-error';
+  } catch { status.textContent = '✕ 无法连接测试服务'; status.className = 'status-inline status-error'; }
+};
+
+document.querySelector('#testTranslate').onclick = async () => {
+  const status = document.querySelector('#translateStatus');
+  status.textContent = '正在测试翻译连通性…'; status.className = 'status-inline';
+  try {
+    const response = await fetch('/api/translate-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        primaryTranslator: document.querySelector('#primaryTranslator').value,
+        translateFallback: document.querySelector('#translateFallback').checked,
+        deeplKey: document.querySelector('#deeplKey').value.trim(),
+        tencentSecretId: document.querySelector('#tencentSecretId').value.trim(),
+        tencentSecretKey: document.querySelector('#tencentSecretKey').value.trim(),
+        volcAccessKey: document.querySelector('#volcAccessKey').value.trim(),
+        volcSecretKey: document.querySelector('#volcSecretKey').value.trim(),
+        googleTranslateKey: document.querySelector('#googleTranslateKey').value.trim()
+      })
+    });
+    const data = await response.json();
+    if (data.ok) {
+      status.textContent = `✓ [${data.engine}] 成功: ${data.translated}`;
+      status.className = 'status-inline status-success';
+    } else {
+      status.textContent = `✕ 失败: ${data.error || '测试未通过'}`;
+      status.className = 'status-inline status-error';
+    }
+  } catch (error) {
+    status.textContent = `✕ 连接错误: ${error.message}`;
+    status.className = 'status-inline status-error';
+  }
+};
+
 document.querySelector('#saveSettings').onclick = async () => {
-  localStorage.loginName = document.querySelector('#loginName').value.trim();
-  localStorage.loginKey = document.querySelector('#loginKey').value.trim();
+  const payload = {
+    loginName: document.querySelector('#loginName').value.trim(),
+    loginKey: document.querySelector('#loginKey').value.trim(),
+    pixivCookie: document.querySelector('#pixivCookie').value.trim(),
+    pixivRefreshToken: document.querySelector('#pixivRefreshToken').value.trim(),
+    primaryTranslator: document.querySelector('#primaryTranslator').value,
+    translateFallback: document.querySelector('#translateFallback').checked,
+    deeplKey: document.querySelector('#deeplKey').value.trim(),
+    tencentSecretId: document.querySelector('#tencentSecretId').value.trim(),
+    tencentSecretKey: document.querySelector('#tencentSecretKey').value.trim(),
+    volcAccessKey: document.querySelector('#volcAccessKey').value.trim(),
+    volcSecretKey: document.querySelector('#volcSecretKey').value.trim(),
+    googleTranslateKey: document.querySelector('#googleTranslateKey').value.trim()
+  };
+
+  localStorage.loginName = payload.loginName;
+  localStorage.loginKey = payload.loginKey;
+  localStorage.pixivCookie = payload.pixivCookie;
+  localStorage.pixivRefreshToken = payload.pixivRefreshToken;
+  localStorage.primaryTranslator = payload.primaryTranslator;
+  localStorage.translateFallback = String(payload.translateFallback);
+  localStorage.deeplKey = payload.deeplKey;
+  localStorage.tencentSecretId = payload.tencentSecretId;
+  localStorage.tencentSecretKey = payload.tencentSecretKey;
+  localStorage.volcAccessKey = payload.volcAccessKey;
+  localStorage.volcSecretKey = payload.volcSecretKey;
+  localStorage.googleTranslateKey = payload.googleTranslateKey;
+
   try {
     const response = await fetch('/api/account', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ loginName: localStorage.loginName, loginKey: localStorage.loginKey, googleTranslateKey: localStorage.googleTranslateKey })
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
     });
     if (!response.ok) throw Error(`HTTP ${response.status}`);
     const result = await response.json();
     sharedUpdatedAt = result.updatedAt || sharedUpdatedAt;
-    toast('账号已保存并可在局域网设备共用');
+    toast('配置已保存并同步');
   } catch (error) {
-    toast(`账号仅保存在当前设备：${error.message}`);
+    toast(`配置已保存在本地设备：${error.message}`);
   }
   document.querySelector('#settingsDialog').close();
-  loadPopularTags(true);
+  if (station === 'dflow') loadPopularTags(true);
   load(true);
 };
 
@@ -1416,7 +1684,8 @@ function schedulePreferenceSave() {
 }
 function applyPreferences(preferences = {}) {
   const validModes = new Set([...document.querySelectorAll('.mode[data-mode]')].map(button => button.dataset.mode));
-  mode = validModes.has(preferences.mode) ? preferences.mode : 'latest';
+  mode = validModes.has(preferences.mode) ? preferences.mode : (station === 'pflow' ? 'pixiv-daily' : 'latest');
+  if (isPixivMode(mode)) station = 'pflow';
   forcedCols = Math.max(3, Math.min(8, Number(preferences.columns) || 5));
   document.documentElement.style.setProperty('--cols', forcedCols);
   const ratings = Array.isArray(preferences.ratings) && preferences.ratings.length ? new Set(preferences.ratings) : new Set(['g', 's', 'q', 'e']);
@@ -1425,6 +1694,7 @@ function applyPreferences(preferences = {}) {
   searchInput.value = manualSearchTags;
   selectedPopularTags.clear();
   if (Array.isArray(preferences.selectedTags)) preferences.selectedTags.forEach(tag => selectedPopularTags.add(String(tag)));
+  updateStationUI();
   activateButton(document.querySelector(`[data-mode="${mode}"]`));
   document.querySelector('#favoriteFolders')?.classList.toggle('hidden', mode !== 'favorites');
 }
@@ -1444,12 +1714,19 @@ async function initializeSharedState() {
     } else if (localFavorites.length) {
       await saveFavorites(localFavorites);
     }
-    if (remote.account && (remote.account.loginName || remote.account.loginKey || remote.account.googleTranslateKey)) {
+    if (remote.account) {
       if (remote.account.loginName) localStorage.loginName = remote.account.loginName;
       if (remote.account.loginKey) localStorage.loginKey = remote.account.loginKey;
+      if (remote.account.pixivCookie) localStorage.pixivCookie = remote.account.pixivCookie;
+      if (remote.account.pixivRefreshToken) localStorage.pixivRefreshToken = remote.account.pixivRefreshToken;
+      if (remote.account.primaryTranslator) localStorage.primaryTranslator = remote.account.primaryTranslator;
+      if (remote.account.translateFallback !== undefined) localStorage.translateFallback = String(remote.account.translateFallback);
+      if (remote.account.deeplKey) localStorage.deeplKey = remote.account.deeplKey;
+      if (remote.account.tencentSecretId) localStorage.tencentSecretId = remote.account.tencentSecretId;
+      if (remote.account.tencentSecretKey) localStorage.tencentSecretKey = remote.account.tencentSecretKey;
+      if (remote.account.volcAccessKey) localStorage.volcAccessKey = remote.account.volcAccessKey;
+      if (remote.account.volcSecretKey) localStorage.volcSecretKey = remote.account.volcSecretKey;
       if (remote.account.googleTranslateKey) localStorage.googleTranslateKey = remote.account.googleTranslateKey;
-    } else if (localStorage.loginName || localStorage.loginKey || localStorage.googleTranslateKey) {
-      await fetch('/api/account', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginName: localStorage.loginName || '', loginKey: localStorage.loginKey || '', googleTranslateKey: localStorage.googleTranslateKey || '' }) });
     }
     applyPreferences(remote.updatedAt ? remote.preferences : localPreferences);
   } catch {
@@ -1461,7 +1738,7 @@ async function initializeSharedState() {
   updateRatingLabel();
   renderColumnOptions();
   resetColumns();
-  await loadPopularTags();
+  if (station === 'dflow') await loadPopularTags();
   load();
 }
 async function pullSharedFavorites() {
@@ -1480,9 +1757,11 @@ async function pullSharedFavorites() {
       if (changed && mode === 'favorites') refreshFavoriteGallery(true);
       if(mode === 'metadata') loadMetadataGallery();
     }
-    if (remote.account?.loginName && remote.account?.loginKey) {
-      localStorage.loginName = remote.account.loginName;
-      localStorage.loginKey = remote.account.loginKey;
+    if (remote.account) {
+      if (remote.account.loginName) localStorage.loginName = remote.account.loginName;
+      if (remote.account.loginKey) localStorage.loginKey = remote.account.loginKey;
+      if (remote.account.pixivCookie) localStorage.pixivCookie = remote.account.pixivCookie;
+      if (remote.account.primaryTranslator) localStorage.primaryTranslator = remote.account.primaryTranslator;
     }
   } catch {}
 }
@@ -1534,19 +1813,37 @@ async function loadWordedGallery(preserveScroll = false) {
     const posts = favoriteVisibleItems();
     const visible = entries.filter(item => (item.folder || 'worded') === favoriteFolder);
     resetColumns(); currentPosts = posts.slice();
-    if (favoriteFolder === 'worded') {
+    if (favoriteFolder === 'worded' || favoriteFolder === 'completed') {
       const rows = [
-        ...posts.map(value => ({kind:'favorite', value, landscape:Number(value.image_width||0)>Number(value.image_height||0), at:value.wordedAt || value.created_at || '', index:0})),
-        ...visible.map(value => ({kind:'entry', value, landscape:Number(value.width||0)>Number(value.height||0), at:value.createdAt || value.updatedAt || '', index:0}))
+        ...posts.map(value => ({
+          kind: 'favorite',
+          value,
+          landscape: Number(value.image_width || 0) > Number(value.image_height || 0),
+          at: value.completedAt || value.wordedAt || value.created_at || '',
+          index: 0
+        })),
+        ...visible.map(value => ({
+          kind: 'entry',
+          value,
+          landscape: Number(value.width || 0) > Number(value.height || 0),
+          at: value.completedAt || value.updatedAt || value.createdAt || '',
+          index: 0
+        }))
       ];
-      rows.forEach((row,index) => row.index=index);
-      rows.sort((a,b) => Number(b.landscape)-Number(a.landscape) || (Date.parse(b.at||'')||0)-(Date.parse(a.at||'')||0) || a.index-b.index);
-      for (const row of rows) row.kind === 'favorite' ? renderReverseCard(row.value) : renderWordedCard(row.value);
+      rows.forEach((row, index) => row.index = index);
+      rows.sort((a, b) => Number(b.landscape) - Number(a.landscape) ||
+        (Date.parse(b.at || '') || 0) - (Date.parse(a.at || '') || 0) ||
+        a.index - b.index
+      );
+      for (const row of rows) {
+        row.kind === 'favorite' ? renderReverseCard(row.value) : renderWordedCard(row.value);
+      }
     } else {
       render(posts); for (const item of visible) renderWordedCard(item);
     }
     statusEl.textContent = folderName[favoriteFolder] + ' ' + (posts.length + visible.length) + ' 张';
-    const count = document.querySelector('#wordedCount'); if (count) count.textContent = entries.filter(item=>(item.folder||'worded')==='worded').length + readFavorites().filter(item=>postFolder(item)==='worded').length;
+    const count = document.querySelector('#wordedCount');
+    if (count) count.textContent = entries.filter(item => (item.folder || 'worded') === 'worded').length + readFavorites().filter(item => postFolder(item) === 'worded').length;
     ended = true; sentinel.classList.remove('loading'); sentinel.classList.add('done');
     if (preserveScroll) requestAnimationFrame(() => scrollTo({top}));
   } catch (error) { statusEl.textContent = '读取有词区失败：' + error.message; }
@@ -1559,47 +1856,60 @@ async function changeWordedFolder(item,folder){
   }catch(error){toast(`移动失败：${error.message}`)}
 }
 function renderWordedCard(item){
-  const card=document.createElement('article');
-  card.className=`reverse-card worded-card ${item.imageExt?item.width>item.height?'landscape':'portrait':'text-only'}`;
-  const picture=document.createElement('div');picture.className='reverse-picture';
-  const url=item.imageExt?`/api/worded/images/${encodeURIComponent(item.id)}?v=${encodeURIComponent(item.imageExt)}`:'';
-  if(item.imageExt){
-    const img=document.createElement('img');img.loading='lazy';img.src=url;img.alt=item.name||'有词卡片';
-    img.onclick=()=>openLightbox({image_width:item.width,image_height:item.height},card,img.src);picture.append(img);
-    if(item.width>item.height)picture.style.height=`${Math.min(60,item.height/item.width*100)}%`;
-    else picture.style.width=`${Math.min(60,item.width/item.height*100)}%`;
-  }else{
-    const summary=document.createElement('span');summary.className='text-summary';summary.textContent=item.summary||item.positive.slice(0,30);picture.append(summary);
-    picture.style.height='60%';
+  const itemFolder = item.folder || 'worded';
+  const isLandscape = item.imageExt ? item.width > item.height : false;
+  const isWordedOrCompleted = ['worded', 'completed'].includes(itemFolder);
+  const card = document.createElement('article');
+  card.className = `reverse-card worded-card ${item.imageExt ? (isLandscape ? 'landscape' : 'portrait') : 'text-only'}`;
+  const picture = document.createElement('div'); picture.className = 'reverse-picture';
+  const url = item.imageExt ? `/api/worded/images/${encodeURIComponent(item.id)}?v=${encodeURIComponent(item.imageExt)}` : '';
+  if (item.imageExt) {
+    const img = document.createElement('img'); img.loading = 'lazy'; img.src = url; img.alt = item.name || '有词卡片';
+    img.onclick = () => openLightbox({image_width:item.width, image_height:item.height}, card, img.src); picture.append(img);
+    if (item.width > item.height) picture.style.height = `${Math.min(60, item.height / item.width * 100)}%`;
+    else picture.style.width = `${Math.min(60, item.width / item.height * 100)}%`;
+  } else {
+    const summary = document.createElement('span'); summary.className = 'text-summary'; summary.textContent = item.summary || item.positive.slice(0,30); picture.append(summary);
+    picture.style.height = '60%';
   }
-  const panel=document.createElement('div');panel.className='reverse-panel';
-  panel.append(createPromptControl(item.positive,{kind:'worded',id:item.id,imageUrl:url,summary:item.summary,
-    onSaved:value=>{item.positive=value;loadWordedGallery(true)}}));
-  if(item.folder==='pending'){
-    const status=document.createElement('span');status.className='worded-status';status.textContent=item.reverseStatus==='failed'?'错误':item.reverseStatus==='processing'?'处理中':'等待';
+  const panel = document.createElement('div'); panel.className = 'reverse-panel';
+  panel.append(createPromptControl(item.positive, {
+    kind: 'worded',
+    id: item.id,
+    imageUrl: url,
+    summary: item.summary,
+    onSaved: value => { item.positive = value; loadWordedGallery(true); }
+  }));
+  if (itemFolder === 'pending') {
+    const status = document.createElement('span'); status.className = 'worded-status';
+    status.textContent = item.reverseStatus === 'failed' ? '错误' : item.reverseStatus === 'processing' ? '处理中' : '等待';
     panel.append(status);
+  } else if (isWordedOrCompleted) {
+    const panelActions = document.createElement('div');
+    panelActions.className = `panel-actions-bar ${isLandscape ? 'horizontal' : 'vertical'}`;
+
+    const ai = document.createElement('button');
+    ai.type = 'button'; ai.className = 'ai-button'; ai.textContent = 'AI';
+    ai.title = '移至待反推';
+    ai.onclick = event => { event.stopPropagation(); changeWordedFolder(item, 'pending'); };
+
+    const completed = document.createElement('button');
+    completed.type = 'button';
+    completed.className = `completed-button ${itemFolder === 'completed' ? 'active' : ''}`;
+    completed.innerHTML = RELEASE_SVG;
+    completed.title = itemFolder === 'completed' ? '移回有词区' : '释放至已完成';
+    completed.onclick = event => {
+      event.stopPropagation();
+      changeWordedFolder(item, itemFolder === 'completed' ? 'worded' : 'completed');
+    };
+
+    panelActions.append(ai, completed);
+    panel.append(panelActions);
   }
-  const ai=document.createElement('button');ai.className='ai-button';ai.textContent='AI';
-  ai.title=item.folder==='pending'?'移回有词区':'加入待反推';
-  ai.onclick=event=>{event.stopPropagation();changeWordedFolder(item,item.folder==='pending'?'worded':'pending')};
-  picture.append(ai);
-  if(item.folder!=='pending') {
-    const completed=document.createElement('button');completed.type='button';
-    completed.className='completed-button active';
-    completed.textContent=item.folder==='completed'?'✓':'○';
-    completed.title=item.folder==='completed'?'移回有词区':'释放至已完成';
-    completed.setAttribute('aria-label',completed.title);
-    completed.onclick=event=>{event.stopPropagation();changeWordedFolder(item,item.folder==='completed'?'worded':'completed')};
-    picture.append(completed);
-  }
-  const remove=document.createElement('button');remove.className='worded-delete';remove.textContent='删除';remove.title='删除本地卡片及图片';
-  remove.onclick=async()=>{
-    if(!confirm('删除此卡片及本地图片？'))return;
-    const response=await fetch(`/api/worded/entries/${encodeURIComponent(item.id)}`,{method:'DELETE'});
-    if(response.ok){card.remove();loadWordedGallery(true)}else toast('删除失败');
-  };
-  card.append(picture,panel,remove);card.oncontextmenu=event=>showManualMenu(event,item);
-  const index=state.heights.indexOf(Math.min(...state.heights));state.columns[index].append(card);state.heights[index]+=1;
+
+  card.append(picture, panel);
+  card.oncontextmenu = event => showManualMenu(event, item);
+  appendRenderedCard(card);
 }
 function renderMetadataCard(item, collection = 'metadata') {
   if(collection==='worded')return renderWordedCard(item);
@@ -1637,7 +1947,7 @@ function renderMetadataCard(item, collection = 'metadata') {
     paste.onpaste=e=>{const file=[...e.clipboardData.files].find(x=>x.type.startsWith('image/'));if(file){e.preventDefault();upload(file)}};actions.append(paste,chooser);
   }
   const remove=document.createElement('button');remove.textContent='删除';remove.onclick=async()=>{if(!confirm('删除此卡片及本地图片？'))return;const url=collection==='worded'?`/api/worded/entries/${encodeURIComponent(item.id)}`:`/api/metadata/images/${encodeURIComponent(item.id)}`;const res=await fetch(url,{method:'DELETE'});if(res.ok)(collection==='worded'?loadWordedGallery():loadMetadataGallery());else toast('删除失败');};actions.append(remove);panel.append(actions);
-  card.append(picture,panel);const index=state.heights.indexOf(Math.min(...state.heights));state.columns[index].append(card);state.heights[index]+=1;
+  card.append(picture,panel);appendRenderedCard(card);
 }
 document.querySelector('#manualWorded').onclick=()=>showPromptDialog('',{kind:'create'});
 async function uploadFavoriteImage(id,file) {
