@@ -9,7 +9,8 @@ const searchInput = document.querySelector('#search');
 const FAVORITES_KEY = 'dflowFavoritesV1';
 const PREFERENCES_KEY = 'dflowPreferencesV1';
 const ratingNames = { g: '全年龄', s: '敏感', q: '较敏感', e: '成人' };
-const reversePresets = ['动作扩写', '艺术导演扩写', '随机', '巨构提示词', '瑶光真人', '通用扩写', '动漫专用'];
+let presetConfig = { reverse:[{name:'通用反推'}], expansion:[{name:'通用扩写'}], defaultReverse:'通用反推', defaultExpansion:'通用扩写' };
+const expansionNames = () => [...presetConfig.expansion.map(item => item.name), '随机'];
 const folderName = {original:'原始收藏', pending:'待反推', worded:'有词区', completed:'已完成', metadata:'元数据库'};
 const postFolder = post => post.folder || (post.completed ? 'completed' : 'original');
 const state = { columns: [], heights: [], ordered: false };
@@ -197,7 +198,14 @@ async function requestPosts(url, signal) {
       await sleep(3000, signal);
       continue;
     }
-    if (response.ok) return response.json();
+    if (response.ok) {
+      const posts = await response.json();
+      if (!Array.isArray(posts)) throw Error('图片接口返回格式错误：预期图片列表');
+      if (url.startsWith('/api/pixiv/ranking') && response.headers.get('X-Pixiv-Has-More') === 'false') {
+        Object.defineProperty(posts, 'hasNextPage', {value:false});
+      }
+      return posts;
+    }
     const detail = await response.json().catch(() => ({}));
     if ([420, 429].includes(response.status) && attempt === 0) {
       const wait = Math.min(120000, Math.max(10000, Number(response.headers.get('Retry-After') || 0) * 1000));
@@ -280,7 +288,7 @@ function favoriteFields(post) {
     image_width: post.image_width, image_height: post.image_height,
     tag_string_general: post.tag_string_general || '', tag_string_character: post.tag_string_character || '',
     tag_string_copyright: post.tag_string_copyright || '', created_at: post.created_at || '', completed: Boolean(post.completed),
-    folder: postFolder(post), preset: post.preset || '动漫专用', autoEnabled: post.autoEnabled !== false,
+    folder: postFolder(post), preset: post.preset || presetConfig.defaultExpansion, reversePreset:post.reversePreset || presetConfig.defaultReverse, autoEnabled: post.autoEnabled !== false,
     prompt: post.prompt || '', resolvedPreset: post.resolvedPreset || '', reverseStatus: post.reverseStatus || 'idle',
     reverseError: post.reverseError || '', cacheStatus: post.cacheStatus || 'idle', cacheFile: post.cacheFile || ''
   };
@@ -499,7 +507,7 @@ async function load(reset = false) {
   statusEl.textContent = '正在加载…';
   try {
     const ratings = ratingChecks();
-    if (!ratings.length) throw Error('请至少选择一个分级');
+    if (station !== 'pflow' && !ratings.length) throw Error('请至少选择一个分级');
     // 每个已勾选分级都取完整一批。之前把 36 按分级数量平分，
     // 全选四级时每级只取 12 张，导致榜单一次只出现很少图片。
     const perRatingLimit = 36;
@@ -521,19 +529,24 @@ async function load(reset = false) {
         results.push(pendingRatingResults.get(rating));
       }
     }
+    const receivedCount = results.flat().length;
     const seen = new Set();
     let posts = results.flat().filter(post => post?.id && !seen.has(post.id) && seen.add(post.id));
     // API 的 tags 过滤偶尔会返回混合分级（尤其是榜单/缓存结果），
     // 前端再做一次硬过滤，避免取消勾选后仍出现其它颜色的分级圆点。
-    const selectedRatings = new Set(ratings);
-    posts = posts.filter(post => selectedRatings.has(post.rating || 'g'));
+    // PFlow 榜单（尤其 R18）已经按 Pixiv 自身的榜单分类筛选。
+    // Danbooru 的 g/s/q/e 选择不可再用于过滤 PFlow，否则 s/q 或仅 g 会把整个榜单清空。
+    if (station !== 'pflow') {
+      const selectedRatings = new Set(ratings);
+      posts = posts.filter(post => selectedRatings.has(post.rating || 'g'));
+    }
     if (mode === 'viewed') posts = posts.filter(favoriteMatches);
     posts = posts.filter(post => post.preview_file_url || post.large_file_url || post.file_url);
     if (mode === 'latest') posts.sort((a, b) => b.id - a.id);
     if (run !== generation) return;
     if (!posts.length) {
       ended = true;
-      statusEl.textContent = '暂时没有更多图片';
+      statusEl.textContent = receivedCount ? `接口返回 ${receivedCount} 张，但没有可显示的图片` : (station === 'pflow' && !manualSearchTags ? 'Pixiv 榜单已到底' : '暂时没有更多图片');
       sentinel.classList.add('done');
       return;
     }
@@ -546,6 +559,10 @@ async function load(reset = false) {
       ended = true;
       sentinel.classList.add('done');
       statusEl.textContent = `日浏览榜已显示 ${posts.length} 张`;
+    } else if (station === 'pflow' && !manualSearchTags && results[0]?.hasNextPage === false) {
+      ended = true;
+      sentinel.classList.add('done');
+      statusEl.textContent = `Pixiv 榜单已到底，共显示 ${currentPosts.length} 张`;
     } else {
       statusEl.textContent = '继续下滑加载';
     }
@@ -585,6 +602,14 @@ async function load(reset = false) {
     }
     const isPixiv = post.source === 'pixiv' || String(post.id).startsWith('px_');
     const img = document.createElement('img');
+    // Reserve the post's aspect ratio before its thumbnail arrives. Otherwise
+    // every masonry card starts as a thin strip and expands while scrolling.
+    const width = Number(post.image_width);
+    const height = Number(post.image_height);
+    const ratio = width > 0 && height > 0 && Number.isFinite(width / height)
+      ? Math.max(0.2, Math.min(5, height / width)) : 4 / 3;
+    img.width = 1000;
+    img.height = Math.round(1000 * ratio);
     img.loading = 'lazy';
     img.decoding = 'async';
     img.src = mode === 'favorites' && post.cacheStatus === 'ready' ? `/api/reverse/image/${post.id}` : imageSrc(post.preview_file_url || post.large_file_url || post.file_url);
@@ -660,7 +685,6 @@ async function load(reset = false) {
     card.oncontextmenu = event => showMenu(event, post);
     card.addEventListener('click', () => openLightbox(post, card,
       mode === 'favorites' && post.cacheStatus === 'ready' ? (img.currentSrc || img.src) : ''));
-    const ratio = (post.image_height || 1) / (post.image_width || 1);
     appendRenderedCard(card, ratio + .03);
   }
 }
@@ -739,20 +763,29 @@ function renderReverseCard(post) {
     };
     queue.append(queueLabel, queueButton);
 
-    const picker = document.createElement('select'); picker.className = 'preset-picker'; picker.title = '反推预设';
-    picker.setAttribute('aria-label', '反推预设');
-    for (const preset of reversePresets) {
+    const picker = document.createElement('select'); picker.className = 'preset-picker'; picker.title = '扩写预设';
+    picker.setAttribute('aria-label', '扩写预设');
+    for (const preset of expansionNames()) {
       const option = document.createElement('option'); option.value = preset; option.textContent = preset;
       picker.append(option);
     }
-    picker.value = post.preset || '动漫专用';
+    if (post.preset && !expansionNames().includes(post.preset)) picker.add(new Option(`${post.preset}（已移除）`, post.preset));
+    picker.value = post.preset || presetConfig.defaultExpansion;
     picker.onchange = async () => {
       try { await patchFavorite(post.id, {preset: picker.value}); }
-      catch(error) { picker.value = post.preset || '动漫专用'; toast(`预设保存失败：${error.message}`); }
+      catch(error) { picker.value = post.preset || presetConfig.defaultExpansion; toast(`扩写预设保存失败：${error.message}`); }
+    };
+    const reversePicker = document.createElement('select'); reversePicker.className='preset-picker'; reversePicker.title='反推预设';
+    reversePicker.setAttribute('aria-label', '反推预设');
+    for(const entry of presetConfig.reverse) reversePicker.add(new Option(`反推：${entry.name}`,entry.name));
+    reversePicker.value = post.reversePreset || presetConfig.defaultReverse;
+    reversePicker.onchange = async () => {
+      try { await patchFavorite(post.id, {reversePreset:reversePicker.value}); }
+      catch(error) { reversePicker.value=post.reversePreset || presetConfig.defaultReverse; toast(`反推预设保存失败：${error.message}`); }
     };
 
     const actions = document.createElement('div'); actions.className = 'reverse-actions';
-    actions.append(status, queue, picker);
+    actions.append(status, queue, reversePicker, picker);
 
     const instruction = document.createElement('input'); instruction.className = 'reverse-instruction';
     instruction.type = 'text'; instruction.maxLength = 4000; instruction.placeholder = '额外要求（与预设一起交给 AI）';
@@ -1249,21 +1282,73 @@ async function blobAsPng(blob) {
   } finally { bitmap.close(); }
 }
 async function copyImage(post) {
-  toast('正在准备高清图片…');
-  const cached = isFavorite(post.id) && readFavorites().find(item => String(item.id) === String(post.id))?.cacheStatus === 'ready';
-  const urls = [...new Set([cached ? `/api/reverse/image/${post.id}` : '', post.large_file_url, post.file_url, post.preview_file_url].filter(Boolean))];
-  let lastError;
-  for (const url of urls) {
-    try {
-      const response = await fetch(url.startsWith('/api/reverse/image/') ? url : `/api/image?url=${encodeURIComponent(url)}`);
-      if (!response.ok) throw Error(`图片下载失败 (${response.status})`);
-      const png = await blobAsPng(await response.blob());
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
-      toast('已复制高清图片');
-      return;
-    } catch (error) { lastError = error; }
+  if (!post) throw Error('没有选中的图片');
+  if (!window.isSecureContext || !navigator.clipboard?.write || !window.ClipboardItem) {
+    throw Error('当前页面不允许写入图片剪贴板，请使用 localhost/HTTPS 打开并允许剪贴板权限');
   }
-  throw lastError || Error('没有可复制的图片');
+  toast('正在准备高清图片…');
+  const saved = readFavorites().find(item => String(item.id) === String(post.id));
+  const cached = saved?.cacheStatus === 'ready' || post.cacheStatus === 'ready';
+  const localUrl = post.imageExt
+    ? `/api/worded/images/${encodeURIComponent(post.id)}`
+    : cached ? `/api/reverse/image/${encodeURIComponent(post.id)}` : '';
+  // 已缓存的收藏绝不回退到远程图床：远端限流不能让本地复制失败。
+  const urls = localUrl ? [localUrl] : [...new Set([
+    post.imageUrl, post.file_url, post.large_file_url, post.preview_file_url
+  ].filter(Boolean))];
+  if (!urls.length) throw Error('没有可复制的本地缓存或图片地址');
+
+  const getPngBlob = async () => {
+    let lastError;
+    for (const url of urls) {
+      const fetchUrl = url.startsWith('/api/') || url.startsWith('blob:')
+        ? url : `/api/image?url=${encodeURIComponent(url)}`;
+      try {
+        const response = await fetch(fetchUrl);
+        if (!response.ok) throw Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        if (!blob.type.startsWith('image/')) throw Error('返回内容不是图片');
+        return await blobAsPng(blob);
+      } catch (error) {
+        lastError = error;
+        console.warn('图片复制：读取/转换失败', fetchUrl, error);
+      }
+    }
+    // 收藏卡片的缩略图也是从同一份本地高清缓存载入的。若 fetch 被浏览器
+    // 中断，直接从已解码的同源图片复制，仍不访问远端。
+    if (localUrl) {
+      const img = [...gallery.querySelectorAll('img')].find(element =>
+        element.complete && element.naturalWidth && new URL(element.currentSrc || element.src).pathname === localUrl);
+      if (img) {
+        try {
+          const bitmap = await createImageBitmap(img);
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = bitmap.width; canvas.height = bitmap.height;
+            canvas.getContext('2d').drawImage(bitmap, 0, 0);
+            return await new Promise((resolve, reject) => canvas.toBlob(
+              value => value ? resolve(value) : reject(Error('图片转换失败')), 'image/png'));
+          } finally { bitmap.close(); }
+        } catch (error) { lastError = error; }
+      }
+    }
+    throw Error(`${localUrl ? '读取本地高清缓存' : '下载高清图片'}失败：${lastError?.message || '未知错误'}`);
+  };
+
+  // 在菜单点击的用户手势内立即调用 write；图片读取及 PNG 转换由 Promise 完成。
+  const pngPromise = getPngBlob();
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngPromise })]);
+  } catch (firstError) {
+    // Chrome/Edge 对异步 ClipboardItem 的支持不一致，保留读取结果再尝试 Blob。
+    const png = await pngPromise;
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    } catch (secondError) {
+      throw Error(`剪贴板写入失败：${secondError.message || firstError.message || '浏览器拒绝'}`);
+    }
+  }
+  toast('已复制高清图片');
 }
 menu.onclick = async event => {
   const action = event.target.dataset.action;
@@ -1291,7 +1376,7 @@ menu.onclick = async event => {
       if(activeManual)showPromptDialog(activeManual.positive,{kind:'moveWorded',id:activeManual.id,imageUrl:activeManual.imageExt?`/api/worded/images/${encodeURIComponent(activeManual.id)}`:'',summary:activeManual.summary});
       else {const saved=readFavorites().find(item=>String(item.id)===String(activePost.id));showPromptDialog(saved?.prompt||'',{kind:'fromPost',post:activePost,imageUrl:saved?.cacheStatus==='ready'?`/api/reverse/image/${activePost.id}`:imageSrc(activePost.large_file_url||activePost.preview_file_url)});}
     }
-    if (action === 'copy') await copyImage(activePost);
+    if (action === 'copy') await copyImage(activePost || activeManual);
     if (action === 'url') { await navigator.clipboard.writeText(hiRes(activePost)); toast('已复制高清图地址'); }
     if (action === 'open') open(`/api/image?url=${encodeURIComponent(hiRes(activePost))}`, '_blank', 'noopener');
   } catch (error) {
@@ -1466,11 +1551,94 @@ function switchStation(next) {
 
 document.querySelector('#stationSwitch').onclick = () => switchStation();
 
+async function loadPresetConfig() {
+  try {
+    const response=await fetch('/api/mcp/presets',{cache:'no-store'});
+    if(!response.ok)throw Error(`HTTP ${response.status}`);
+    const result=await response.json();
+    if(!Array.isArray(result.reverse)||!Array.isArray(result.expansion))throw Error('返回内容不是预设配置');
+    presetConfig=result;
+    return true;
+  } catch(error) {
+    // Do not silently display the generic fallback as if personal presets were loaded.
+    const status=document.querySelector('#mcpPresetStatus');
+    if(status)status.textContent=`读取预设失败：${error.message}。请确认 DFlow 已重启。`;
+    return false;
+  }
+}
+function renderMcpPresets() {
+  for (const [type, containerId] of [['reverse','mcpReversePresets'],['expansion','mcpExpansionPresets']]) {
+    const container=document.querySelector('#'+containerId); container.replaceChildren();
+    for (const entry of presetConfig[type]) {
+      const row=document.createElement('div'); row.className='mcp-preset-row';
+      const heading=document.createElement('div'); heading.className='mcp-preset-heading';
+      const name=document.createElement('input');name.value=entry.name;name.placeholder='预设名称';name.maxLength=60;name.setAttribute('aria-label','预设名称');
+      const remove=document.createElement('button');remove.type='button';remove.textContent='删除';remove.className='btn-subtle';
+      remove.onclick=()=>{if(container.children.length<=1){toast('至少保留一个预设');return}if(confirm(`删除预设「${name.value}」？保存后生效`)){row.remove();updateDefaultPresetSelects();}};
+      heading.append(name,remove);
+      const editor=document.createElement('details');editor.className='mcp-preset-editor';
+      const summary=document.createElement('summary');summary.textContent='编辑正文 / 导入文件';
+      const body=document.createElement('textarea');body.rows=5;body.maxLength=100000;body.value=entry.content || '';body.placeholder='粘贴反推或扩写预设正文';
+      const file=document.createElement('input');file.type='file';file.accept='.txt,.md,text/plain,text/markdown';file.className='mcp-preset-file';
+      file.onchange=async()=>{if(!file.files[0])return;if(file.files[0].size>300000){toast('预设文件超过限制');return}body.value=await file.files[0].text();if(!name.value.trim())name.value=file.files[0].name.replace(/\.(txt|md)$/i,'');editor.open=true;updateDefaultPresetSelects();};
+      editor.append(summary,body,file);name.oninput=updateDefaultPresetSelects;row.append(heading,editor);container.append(row);
+    }
+  }
+  updateDefaultPresetSelects();
+}
+function updateDefaultPresetSelects() {
+  for(const [containerId,selectId,defaultKey] of [['mcpReversePresets','defaultReversePreset','defaultReverse'],['mcpExpansionPresets','defaultExpansionPreset','defaultExpansion']]) {
+    const select=document.querySelector('#'+selectId),previous=select.value || presetConfig[defaultKey];
+    const names=[...document.querySelectorAll(`#${containerId} .mcp-preset-heading input`)].map(x=>x.value.trim()).filter(Boolean);
+    select.replaceChildren(...names.map(name=>new Option(name,name)));
+    select.value=names.includes(previous)?previous:names[0] || '';
+  }
+}
+for(const [buttonId,containerId] of [['addReversePreset','mcpReversePresets'],['addExpansionPreset','mcpExpansionPresets']])
+  document.querySelector('#'+buttonId).onclick=()=>{
+    const type=containerId==='mcpReversePresets'?'reverse':'expansion';
+    presetConfig.reverse=[...document.querySelectorAll('#mcpReversePresets .mcp-preset-row')].map(row=>({name:row.querySelector('.mcp-preset-heading input').value,content:row.querySelector('textarea').value}));
+    presetConfig.expansion=[...document.querySelectorAll('#mcpExpansionPresets .mcp-preset-row')].map(row=>({name:row.querySelector('.mcp-preset-heading input').value,content:row.querySelector('textarea').value}));
+    presetConfig.defaultReverse=document.querySelector('#defaultReversePreset').value;
+    presetConfig.defaultExpansion=document.querySelector('#defaultExpansionPreset').value;
+    presetConfig[type].push({name:'',content:''});renderMcpPresets();
+    const added=document.querySelector(`#${containerId} .mcp-preset-row:last-child`);added.querySelector('details').open=true;added.querySelector('.mcp-preset-heading input').focus();
+  };
+// Read the DOM rather than trusting an old in-memory copy; edited text remains local until Save.
+document.querySelector('#saveMcpPresets').onclick=async()=>{
+  const status=document.querySelector('#mcpPresetStatus');status.textContent='正在保存…';
+  const entries=id=>[...document.querySelectorAll(`#${id} .mcp-preset-row`)].map(row=>({name:row.querySelector('.mcp-preset-heading input').value.trim(),content:row.querySelector('textarea').value.trim()}));
+  const payload={reverse:entries('mcpReversePresets'),expansion:entries('mcpExpansionPresets'),defaultReverse:document.querySelector('#defaultReversePreset').value,defaultExpansion:document.querySelector('#defaultExpansionPreset').value};
+  try {const response=await fetch('/api/mcp/presets',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const result=await response.json();if(!response.ok)throw Error(result.error||`HTTP ${response.status}`);
+    presetConfig=result;status.textContent='已保存';renderMcpPresets();if(mode==='favorites'&&favoriteFolder==='pending')refreshFavoriteGallery(true);
+  }catch(error){status.textContent='保存失败：'+error.message;}
+};
+async function refreshMcpSessions(){
+  const container=document.querySelector('#mcpSessions');
+  try { const response=await fetch('/api/mcp/sessions',{cache:'no-store'});const result=await response.json();if(!response.ok)throw Error(result.error||`HTTP ${response.status}`);
+    container.replaceChildren();if(!result.length){container.textContent='当前没有连接中的 Agent';return;}
+    for(const session of result){const row=document.createElement('div');row.className='mcp-session';const label=document.createElement('span');label.textContent=`${session.name} ${session.version || ''} · 已连接 ${new Date(session.since).toLocaleTimeString()}`;
+      const disconnect=document.createElement('button');disconnect.type='button';disconnect.className='btn-subtle';disconnect.textContent='断开';disconnect.onclick=async()=>{if(!confirm(`断开 ${session.name} 的当前 MCP 会话？`))return;await fetch(`/api/mcp/sessions/${encodeURIComponent(session.id)}`,{method:'DELETE'});refreshMcpSessions();};row.append(label,disconnect);container.append(row);}
+  }catch(error){container.textContent='读取连接失败：'+error.message;}
+}
+document.querySelector('#refreshMcpSessions').onclick=refreshMcpSessions;
+document.querySelector('#copyMcpConfig').onclick=async()=>{try{await navigator.clipboard.writeText(document.querySelector('#mcpConnectionConfig').value);toast('已复制 MCP 连接配置');}catch(error){toast('复制失败：'+error.message)}};
+fetch('/api/mcp/setup').then(response=>response.json()).then(config=>{
+  if(!config.args)throw Error('只能在运行 DFlow 的电脑上查看连接配置');
+  document.querySelector('#mcpConnectionConfig').value=JSON.stringify({mcpServers:{'dflow-local':{command:config.command,args:config.args,env:{DFLOW_PORT:String(config.port)}}}},null,2);
+}).catch(error=>{document.querySelector('#mcpConnectionConfig').value=error.message;});
+setInterval(()=>{if(document.querySelector('#settingsDialog').open&&document.querySelector('#tabMcp').classList.contains('active'))refreshMcpSessions();},6000);
+
+let mcpPresetRendered=false;
 // Settings Dialog Tabs
 document.querySelectorAll('.settings-tab').forEach(tab => {
   tab.onclick = () => {
     document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t === tab));
     document.querySelectorAll('.settings-panel').forEach(p => p.classList.toggle('active', p.id === tab.dataset.tab));
+    if(tab.dataset.tab==='tabMcp') {
+      if(!mcpPresetRendered){loadPresetConfig().then(ok=>{if(ok){renderMcpPresets();mcpPresetRendered=true;}});}
+      refreshMcpSessions();
+    }
   };
 });
 
@@ -1699,6 +1867,7 @@ function applyPreferences(preferences = {}) {
   document.querySelector('#favoriteFolders')?.classList.toggle('hidden', mode !== 'favorites');
 }
 async function initializeSharedState() {
+  await loadPresetConfig();
   const localFavorites = readLocalFavorites();
   let localPreferences = {};
   try { localPreferences = JSON.parse(localStorage.getItem(PREFERENCES_KEY) || '{}'); } catch {}
@@ -1884,6 +2053,17 @@ function renderWordedCard(item){
     const status = document.createElement('span'); status.className = 'worded-status';
     status.textContent = item.reverseStatus === 'failed' ? '错误' : item.reverseStatus === 'processing' ? '处理中' : '等待';
     panel.append(status);
+    for(const [key,names,label] of [['reversePreset',presetConfig.reverse.map(x=>x.name),'反推'],['preset',expansionNames(),'扩写']]){
+      const select=document.createElement('select');select.className='preset-picker';select.setAttribute('aria-label',label+'预设');
+      for(const name of names)select.add(new Option(`${label}：${name}`,name));
+      select.value=item[key] || (key==='preset'?presetConfig.defaultExpansion:presetConfig.defaultReverse);
+      select.onchange=async()=>{
+        const previous=item[key];
+        try{const response=await fetch(`/api/worded/state/${encodeURIComponent(item.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({[key]:select.value})});const result=await response.json();if(!response.ok)throw Error(result.error||`HTTP ${response.status}`);item[key]=result[key];}
+        catch(error){select.value=previous;toast('预设保存失败：'+error.message);}
+      };
+      panel.append(select);
+    }
   } else if (isWordedOrCompleted) {
     const panelActions = document.createElement('div');
     panelActions.className = `panel-actions-bar ${isLandscape ? 'horizontal' : 'vertical'}`;

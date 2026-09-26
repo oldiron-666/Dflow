@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>DFlow / PFlow</title>
-  <link rel="stylesheet" href="/style.css?v=20260926-03">
+  <link rel="stylesheet" href="/style.css?v=20260926-06">
 </head>
 <body>
 <header>
@@ -106,6 +106,7 @@
       <button type="button" class="settings-tab active" data-tab="tabDanbooru">Danbooru 账号</button>
       <button type="button" class="settings-tab" data-tab="tabPixiv">Pixiv 登录</button>
       <button type="button" class="settings-tab" data-tab="tabTranslate">翻译引擎配置</button>
+      <button type="button" class="settings-tab" data-tab="tabMcp">MCP 设置</button>
     </div>
     <button type="button" id="closeSettingsHeader" class="dialog-close-btn" aria-label="关闭">×</button>
   </div>
@@ -197,6 +198,33 @@
         <span id="translateStatus" class="status-inline"></span>
       </div>
     </div>
+    <div id="tabMcp" class="settings-panel">
+      <p class="settings-desc">本机 stdio MCP · 两阶段流程：先反推，再扩写。连接配置只供本机 Agent 使用；预设存放在本地独立文件夹。</p>
+      <div class="mcp-dashboard">
+        <section class="mcp-tile mcp-connection" aria-labelledby="mcpConnectionTitle">
+          <div class="mcp-tile-title"><h4 id="mcpConnectionTitle">MCP 配置连接</h4></div>
+          <p class="settings-desc">先启动 DFlow，再复制到 Agent 的 MCP 配置中。</p>
+          <label>客户端连接配置<textarea id="mcpConnectionConfig" rows="6" readonly></textarea></label>
+          <button type="button" id="copyMcpConfig" class="btn-subtle">复制连接配置</button>
+        </section>
+        <section class="mcp-tile mcp-agents" aria-labelledby="mcpAgentsTitle">
+          <div class="mcp-tile-title"><h4 id="mcpAgentsTitle">已连接的 Agent</h4><button type="button" id="refreshMcpSessions" class="btn-subtle">刷新</button></div>
+          <p class="settings-desc">断开只影响当前会话；客户端可能自动重连。</p>
+          <div id="mcpSessions" aria-live="polite">正在读取…</div>
+        </section>
+        <section class="mcp-tile mcp-reverse" aria-labelledby="mcpReverseTitle">
+          <div class="mcp-tile-title"><h4 id="mcpReverseTitle">反推预设</h4><button type="button" id="addReversePreset" class="btn-subtle">新增</button></div>
+          <div id="mcpReversePresets" class="mcp-preset-list"></div>
+          <label>默认反推预设<select id="defaultReversePreset"></select></label>
+        </section>
+        <section class="mcp-tile mcp-expansion" aria-labelledby="mcpExpansionTitle">
+          <div class="mcp-tile-title"><h4 id="mcpExpansionTitle">扩写预设</h4><button type="button" id="addExpansionPreset" class="btn-subtle">新增</button></div>
+          <div id="mcpExpansionPresets" class="mcp-preset-list"></div>
+          <label>默认扩写预设<select id="defaultExpansionPreset"></select></label>
+        </section>
+      </div>
+      <div class="mcp-save-row"><span class="settings-desc">预设仅保存到本机 data/mcp-presets/，仓库只自带通用扩写。</span><button type="button" id="saveMcpPresets" class="btn-primary">保存预设</button><span id="mcpPresetStatus" class="status-inline"></span></div>
+    </div>
   </div>
 
   <div class="dialog-actions">
@@ -210,7 +238,6 @@
   <img id="lightboxImage" alt="高清预览"><div id="lightboxHint">点击空白处关闭</div>
 </div>
 <div id="toast"></div>
-<script src="./mobile-adapter.js"></script>
-<script type="module" src="/app.js?v=20260926-03"></script>
+<script type="module" src="/app.js?v=20260926-14"></script>
 </body>
 </html>

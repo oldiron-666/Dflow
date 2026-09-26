@@ -537,8 +537,6 @@ nav::-webkit-scrollbar { display: none; }
   overflow: hidden;
   background: #14171d;
   border: 1px solid var(--surface-border);
-  content-visibility: auto;
-  contain-intrinsic-size: 320px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -1704,3 +1702,33 @@ dialog.settings-modal::backdrop {
     max-height: 78vh;
   }
 }
+/* Four-panel MCP dashboard inside the existing login settings dialog. */
+dialog.settings-modal:has(#tabMcp.active) { width: min(1100px, 96vw); }
+.settings-tabs { flex-wrap: wrap; }
+.mcp-dashboard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.mcp-tile { min-width: 0; min-height: 185px; padding: 14px; border: 1px solid rgba(255,255,255,.1); border-radius: 12px; background: rgba(255,255,255,.025); }
+.mcp-reverse, .mcp-expansion { display: flex; flex-direction: column; min-height: 285px; }
+.mcp-tile-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+#tabMcp .mcp-tile-title h4 { margin: 0; font-size: 14px; }
+.mcp-tile-title button { flex: none; }
+.mcp-tile .settings-desc { font-size: 12px; margin-bottom: 9px; }
+.mcp-tile label { margin-top: 7px; }
+.mcp-preset-list { overflow-y: auto; min-height: 100px; max-height: 250px; flex: 1; padding-right: 4px; }
+.mcp-preset-row { border: 1px solid rgba(255,255,255,.09); border-radius: 9px; padding: 8px; margin: 0 0 7px; background: rgba(255,255,255,.025); }
+.mcp-preset-heading, .mcp-session { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.mcp-preset-heading input { flex: 1; min-width: 0; margin: 0; }
+.mcp-preset-heading button, .mcp-session button { flex: none; }
+.mcp-preset-editor summary { cursor: pointer; color: #a9bdd7; font-size: 11px; padding: 5px 2px 0; }
+.mcp-preset-editor textarea { resize: vertical; min-height: 96px; }
+.settings-body .mcp-preset-file { font-size: 11px; padding: 5px; }
+.mcp-session { padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.07); overflow-wrap: anywhere; }
+#mcpSessions { max-height: 250px; overflow-y: auto; font-size: 12px; }
+#tabMcp #mcpConnectionConfig { font-size: 11px; resize: vertical; overflow-wrap: anywhere; }
+.mcp-save-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: flex-end; margin-top: 14px; }
+.mcp-save-row .settings-desc { margin: 0 auto 0 0; font-size: 11px; }
+@media (max-width: 700px) { .mcp-dashboard { grid-template-columns: minmax(0, 1fr); } .mcp-tile { min-height: 0; } .mcp-reverse, .mcp-expansion { min-height: 270px; } }
+
+.reverse-card.pending-card .reverse-actions { flex-wrap: wrap; }
+.reverse-card.pending-card .preset-picker { max-width: none; flex: 1 1 42%; }
+
+dialog.settings-modal:has(#tabMcp.active) #saveSettings { display: none; }
