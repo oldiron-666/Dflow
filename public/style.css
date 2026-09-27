@@ -31,6 +31,7 @@ html, body {
    Header & Navigation
    ========================================================================= */
 header {
+  --header-height: 60px;
   height: 60px;
   position: sticky;
   top: 0;
@@ -479,12 +480,23 @@ nav::-webkit-scrollbar { display: none; }
 
 /* Favorite Folders Subnav */
 .favorite-folders {
+  /* Keep the local-favorites folders available while any folder is scrolled. */
+  position: sticky;
+  top: var(--header-height, 60px);
+  z-index: 24;
   display: flex;
   gap: 8px;
-  padding: 8px 20px 4px;
+  padding: 8px 20px 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  background: rgba(11, 13, 17, 0.9);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .favorite-folders button {
+  flex: 0 0 auto;
   border: 1px solid var(--surface-border);
   background: var(--surface);
   color: var(--text-muted);
@@ -1168,6 +1180,36 @@ nav::-webkit-scrollbar { display: none; }
   border-color: rgba(110, 231, 183, .8);
   color: #d1fae5;
 }
+.pending-picture-actions.worded-picture-actions .worded-picture-delete {
+  position: static !important;
+  inset: auto !important;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  background: rgba(15, 18, 24, 0.78);
+  color: #fca5a5;
+  font-size: 21px;
+  line-height: 1;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition: transform .15s ease, background .15s ease, border-color .15s ease;
+}
+.pending-picture-actions.worded-picture-actions .worded-picture-delete:hover {
+  transform: scale(1.1);
+  background: rgba(239, 68, 68, .22);
+  border-color: rgba(252, 165, 165, .8);
+  color: #fee2e2;
+}
 
 /* Worded delete button hidden (now inside right click menu) */
 .worded-delete { display: none !important; }
@@ -1759,7 +1801,9 @@ dialog.settings-modal::backdrop {
 @media (max-width: 760px) {
   :root { --cols: 2; }
   header {
+    --header-height: 100px;
     height: auto;
+    min-height: var(--header-height);
     flex-wrap: wrap;
     padding: 10px 14px;
     gap: 10px;
@@ -1803,6 +1847,6 @@ dialog.settings-modal:has(#tabMcp.active) { width: min(1100px, 96vw); }
 @media (max-width: 700px) { .mcp-dashboard { grid-template-columns: minmax(0, 1fr); } .mcp-tile { min-height: 0; } .mcp-reverse, .mcp-expansion { min-height: 270px; } }
 
 .reverse-card.pending-card .reverse-actions { flex-wrap: wrap; }
-.reverse-card.pending-card .preset-picker { max-width: none; flex: 1 1 42%; }
+.reverse-card.pending-card .preset-picker { max-width: none; flex: 1 1 100%; }
 
 dialog.settings-modal:has(#tabMcp.active) #saveSettings { display: none; }

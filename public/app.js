@@ -2098,17 +2098,23 @@ function renderWordedCard(item){
     const status = document.createElement('span'); status.className = 'worded-status';
     status.textContent = item.reverseStatus === 'failed' ? '错误' : item.reverseStatus === 'processing' ? '处理中' : '等待';
     panel.append(status);
-    for(const [key,names,label] of [['reversePreset',presetConfig.reverse.map(x=>x.name),'反推'],['preset',expansionNames(),'扩写']]){
-      const select=document.createElement('select');select.className='preset-picker';select.setAttribute('aria-label',label+'预设');
-      for(const name of names)select.add(new Option(`${label}：${name}`,name));
-      select.value=item[key] || (key==='preset'?presetConfig.defaultExpansion:presetConfig.defaultReverse);
-      select.onchange=async()=>{
-        const previous=item[key];
-        try{const response=await fetch(`/api/worded/state/${encodeURIComponent(item.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({[key]:select.value})});const result=await response.json();if(!response.ok)throw Error(result.error||`HTTP ${response.status}`);item[key]=result[key];}
-        catch(error){select.value=previous;toast('预设保存失败：'+error.message);}
-      };
-      panel.append(select);
-    }
+    // 反推流程固定使用唯一的“通用反推”，卡片上不再显示反推预设选择框；
+    // 用户只需要为完成后的扩写选择预设。
+    const select=document.createElement('select');
+    select.className='preset-picker';
+    select.setAttribute('aria-label','扩写预设');
+    for(const name of expansionNames()) select.add(new Option(`扩写：${name}`,name));
+    select.value=item.preset || presetConfig.defaultExpansion;
+    select.onchange=async()=>{
+      const previous=item.preset;
+      try{
+        const response=await fetch(`/api/worded/state/${encodeURIComponent(item.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({preset:select.value})});
+        const result=await response.json();
+        if(!response.ok) throw Error(result.error||`HTTP ${response.status}`);
+        item.preset=result.preset || select.value;
+      } catch(error){ select.value=previous || presetConfig.defaultExpansion; toast('扩写预设保存失败：'+error.message); }
+    };
+    panel.append(select);
   } else if (isWordedOrCompleted) {
     const panelActions = document.createElement('div');
     panelActions.className = `panel-actions-bar ${isLandscape ? 'horizontal' : 'vertical'}`;
@@ -2130,6 +2136,29 @@ function renderWordedCard(item){
 
     panelActions.append(ai, completed);
     panel.append(panelActions);
+  }
+
+  if (itemFolder === 'pending') {
+    const pictureActions = document.createElement('div');
+    pictureActions.className = 'pending-picture-actions worded-picture-actions';
+    const back = document.createElement('button');
+    back.type = 'button'; back.className = 'pending-back-button'; back.innerHTML = BACK_SVG;
+    back.title = '返回有词区'; back.setAttribute('aria-label', back.title);
+    back.onclick = event => { event.stopPropagation(); changeWordedFolder(item, 'worded'); };
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.className = 'worded-picture-delete'; remove.textContent = '×';
+    remove.title = '删除这张自制卡片'; remove.setAttribute('aria-label', remove.title);
+    remove.onclick = async event => {
+      event.stopPropagation();
+      if (!confirm('确定删除这张提示词卡片及本地图片？')) return;
+      try {
+        const response = await fetch(`/api/worded/entries/${encodeURIComponent(item.id)}`, {method:'DELETE'});
+        if (!response.ok) throw Error(`HTTP ${response.status}`);
+        loadWordedGallery(true); toast('已删除卡片');
+      } catch(error) { toast(`删除失败：${error.message}`); }
+    };
+    pictureActions.append(back, remove);
+    picture.append(pictureActions);
   }
 
   card.append(picture, panel);
