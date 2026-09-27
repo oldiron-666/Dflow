@@ -1,6 +1,6 @@
 // Bridge for an agent running the Krea 2 automation mode; never generates prompts itself.
 import fs from 'node:fs';
-const base = process.env.DFLOW_URL || 'http://127.0.0.1:4173';
+const base = process.env.DFLOW_URL || 'http://localhost:4173';
 const [command, id, value, preset] = process.argv.slice(2);
 async function call(route, method='GET', body) {
   const res = await fetch(new URL(route, base), {method, headers:{'Content-Type':'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
