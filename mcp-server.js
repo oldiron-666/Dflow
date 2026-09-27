@@ -132,9 +132,10 @@ tool('import_metadata_png', '导入本地原始 ComfyUI PNG 至元数据库，�
   return text(await response.json());
 });
 
-await server.connect(new StdioServerTransport());
-// Stdio is one client per process. The desktop UI shows live sessions, not saved credentials.
+// Stdio is one client per process. Register before connect: the SDK emits
+// `initialized` during connect, so assigning this callback afterwards loses it.
 async function registerSession() {
+  if (sessionId) return;
   try {
     const client=server.server.getClientVersion();
     const result=await json('/api/mcp/sessions','POST',{name:client?.name || process.env.DFLOW_AGENT_NAME || '未知 Agent',version:client?.version || ''});
@@ -142,6 +143,7 @@ async function registerSession() {
   } catch (error) { console.error('DFlow MCP 连接状态登记失败:', error.message); }
 }
 server.server.oninitialized = registerSession;
+await server.connect(new StdioServerTransport());
 const heartbeat=setInterval(async()=>{
   if (!sessionId) return;
   try {

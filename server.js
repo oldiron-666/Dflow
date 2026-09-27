@@ -2,6 +2,7 @@ import express from "express";
 import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { inspectPng } from "./metadata.js";
 import { presetDefaults, validatePresets, PRESET_STORE, readPresetLibrary, savePresetLibrary } from "./presets.js";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,22 @@ const HOST = process.env.HOST || "0.0.0.0";
 const DANBOORU = "https://danbooru.donmai.us";
 app.use(express.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+const APP_VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).version || "0.1.0"; } catch { return "0.1.0"; } })();
+const LOCAL_COMMIT = (() => { try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: __dirname, encoding: "utf8", windowsHide: true }).trim(); } catch { return ""; } })();
+let versionCheckCache = { at: 0, latest: null };
+app.get("/api/version", async (_req, res) => {
+  const now = Date.now();
+  if (!versionCheckCache.latest || now - versionCheckCache.at > 300000) {
+    try {
+      const response = await fetch("https://api.github.com/repos/oldiron-666/Dflow/commits/main", { headers: { "Accept": "application/vnd.github+json", "User-Agent": "DFlow-Version-Checker/1.0" }, signal: AbortSignal.timeout(8000) });
+      if (!response.ok) throw Error(`GitHub HTTP ${response.status}`);
+      const commit = await response.json();
+      versionCheckCache = { at: now, latest: { commit: String(commit.sha || ""), message: String(commit.commit?.message || "").split("\n")[0], date: commit.commit?.committer?.date || "" } };
+    } catch (error) { if (!versionCheckCache.latest) return res.json({ ok: false, error: `无法读取 GitHub 版本：${error.message}`, current: { version: APP_VERSION, commit: LOCAL_COMMIT } }); }
+  }
+  const latest = versionCheckCache.latest;
+  res.json({ ok: true, current: { version: APP_VERSION, commit: LOCAL_COMMIT }, latest, updateAvailable: Boolean(latest?.commit && LOCAL_COMMIT && latest.commit !== LOCAL_COMMIT) });
+});
 
 const DATA_DIR = process.env.DFLOW_DATA_DIR ? path.resolve(process.env.DFLOW_DATA_DIR) : path.join(__dirname, "data");
 const STATE_FILE = path.join(DATA_DIR, "dflow-state.json");
@@ -46,7 +63,7 @@ const localRequest = req => ['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.
 app.get('/api/mcp/sessions', (req, res) => {
   if (!localRequest(req)) return res.status(403).json({error:'仅本机可管理 MCP 连接'});
   const now=Date.now();
-  res.json([...mcpSessions.values()].filter(x=>!x.revoked && now-x.seenAt<20000)
+  res.json([...mcpSessions.values()].filter(x=>!x.revoked && now-x.seenAt<60000)
     .map(({id,name,version,since,seenAt})=>({id,name,version,since,seenAt})));
 });
 app.post('/api/mcp/sessions', (req,res) => {
@@ -162,7 +179,11 @@ function cleanFavorite(post) {
     cacheFile: String(post.cacheFile || ""),
     cacheError: String(post.cacheError || "").slice(0, 1000),
     reverseStartedAt: String(post.reverseStartedAt || ""),
-    wordedAt: String(post.wordedAt || "")
+    promptWrittenAt: String(post.promptWrittenAt || ""),
+    wordedAt: String(post.wordedAt || ""),
+    completedAt: String(post.completedAt || ""),
+    createdAt: String(post.createdAt || post.created_at || ""),
+    updatedAt: String(post.updatedAt || "")
   };
 }
 // Multi-engine Translation System (DeepL, Tencent Cloud TMT, Volcengine, Google) with Failover
@@ -530,11 +551,13 @@ app.put("/api/favorites", (req, res) => {
   const oldById = new Map(sharedState.favorites.map(item => [String(item.id), item]));
   sharedState.favorites = values.map(item => {
     const prior = oldById.get(String(item?.id));
-    return cleanFavorite(prior ? { ...item, folder: prior.folder, completed: prior.completed,
+    const incoming = prior ? { ...item, folder: prior.folder, completed: prior.completed,
       preset: prior.preset, reversePreset:prior.reversePreset, autoEnabled: prior.autoEnabled, queueOrder: prior.queueOrder, prompt: prior.prompt,
       resolvedPreset: prior.resolvedPreset, customInstruction: prior.customInstruction, reverseStatus: prior.reverseStatus,
       reverseError: prior.reverseError, cacheStatus: prior.cacheStatus,
-      cacheFile: prior.cacheFile, cacheError: prior.cacheError, reverseStartedAt: prior.reverseStartedAt, wordedAt: prior.wordedAt } : item);
+      cacheFile: prior.cacheFile, cacheError: prior.cacheError, reverseStartedAt: prior.reverseStartedAt, promptWrittenAt: prior.promptWrittenAt, wordedAt: prior.wordedAt, completedAt: prior.completedAt, createdAt: prior.createdAt, updatedAt: prior.updatedAt } : item;
+    if (incoming && !incoming.createdAt) incoming.createdAt = incoming.created_at || new Date().toISOString();
+    return cleanFavorite(incoming);
   }).filter(Boolean).slice(0, 5000);
   const kept = new Set(sharedState.favorites.map(item => String(item.id)));
   for (const prior of oldById.values()) {
@@ -547,6 +570,7 @@ app.put("/api/favorites", (req, res) => {
       item.cacheFile = ""; item.cacheStatus = "idle"; item.cacheError = "";
     }
   }
+  item.updatedAt = changedAt;
   renumberReverseQueue();
   writeSharedState();
   for (const item of sharedState.favorites) if (item.cacheStatus === "idle" && item.folder !== "original") scheduleCache(item.id);
@@ -560,6 +584,49 @@ function favoriteById(id) { return sharedState.favorites.find(item => String(ite
 function imagePath(item) {
   if (!item.cacheFile || !/^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif)$/i.test(item.cacheFile)) return null;
   return path.join(item.folder === "completed" ? COMPLETED_IMAGE_DIR : item.folder === "worded" ? WORDED_IMAGE_DIR : item.folder === "original" ? ORIGINAL_IMAGE_DIR : PENDING_IMAGE_DIR, item.cacheFile);
+}
+
+function fileCreationTime(file) {
+  if (!file) return '';
+  try {
+    const stat = fs.statSync(file);
+    const ms = Number(stat.birthtimeMs || stat.ctimeMs || stat.mtimeMs || 0);
+    return ms > 0 ? new Date(ms).toISOString() : '';
+  } catch { return ''; }
+}
+function wordedImagePath(item) {
+  return item?.imageExt && /^[a-z0-9]+$/i.test(String(item.imageExt))
+    ? path.join(WORDED_IMAGE_DIR, `${item.id}.${item.imageExt}`) : '';
+}
+// Prompt ordering is based on when the prompt was written, never on image-cache timestamps.
+function ensurePromptWrittenTimes() {
+  let changed = false;
+  let previousState = new Map();
+  try {
+    const old = JSON.parse(fs.readFileSync(STATE_FILE + '.before-worded', 'utf8'));
+    if (Array.isArray(old.favorites)) previousState = new Map(old.favorites.map(item => [String(item.id), item]));
+  } catch {}
+  for (const item of sharedState.favorites) {
+    if (!item.prompt?.trim() || item.promptWrittenAt) continue;
+    const previous = previousState.get(String(item.id));
+    // Before this fix, startup could replace wordedAt with the cached image's
+    // filesystem time. Recover a genuine saved value from the pre-migration
+    // snapshot when possible. Completed favorites kept their original wordedAt.
+    const recovered = previous?.wordedAt || (item.folder === 'completed' ? item.wordedAt : '');
+    item.promptWrittenAt = String(recovered || item.updatedAt || item.createdAt || item.created_at || '');
+    if (item.promptWrittenAt) changed = true;
+  }
+  if (changed) writeSharedState();
+  const list = readWordIndex();
+  let wordChanged = false;
+  for (const item of list) {
+    if (!item.positive?.trim() || item.promptWrittenAt) continue;
+    // Handwritten cards have a true card-creation time; generated legacy cards
+    // retain their recorded wordedAt when available.
+    item.promptWrittenAt = String(item.source === '手写' ? (item.createdAt || item.wordedAt || '') : (item.wordedAt || item.createdAt || item.created_at || ''));
+    if (item.promptWrittenAt) wordChanged = true;
+  }
+  if (wordChanged) saveWordIndex(list);
 }
 function scheduleCache(id) {
   const item = favoriteById(id);
@@ -618,18 +685,21 @@ app.patch("/api/favorites/:id", (req, res) => {
   const item = favoriteById(req.params.id);
   if (!item) return res.status(404).json({error:"Favorite not found"});
   const body = req.body || {};
+  const changedAt = new Date().toISOString();
   if (body.folder !== undefined) {
     if (!["original","pending","worded","completed"].includes(body.folder)) return res.status(400).json({error:"Invalid folder"});
     if (["pending","worded"].includes(item.folder) && body.folder === "completed" && (!item.prompt || item.cacheStatus !== "ready" || !fs.existsSync(imagePath(item) || ""))) return res.status(409).json({error:"Prompt and cached image required before release"});
     if (body.folder !== item.folder) moveCache(item, body.folder);
     item.folder = body.folder; item.completed = body.folder === "completed";
     if (body.folder === "pending") { item.autoEnabled = true; item.reverseStatus = "idle"; item.queueOrder = nextReverseOrder(); }
-    if (body.folder === "worded") { item.autoEnabled = false; item.queueOrder = 0; item.wordedAt = new Date().toISOString(); }
+    if (body.folder === "worded") { item.autoEnabled = false; item.queueOrder = 0; }
+    if (body.folder === "completed") { item.completedAt = changedAt; }
   }
   if (body.prompt !== undefined) {
     if (typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 100000) return res.status(400).json({error:"提示词不能为空或超过 100000 字符"});
     item.prompt = body.prompt.trim();
-    if (item.folder === "pending") { moveCache(item, "worded"); item.folder = "worded"; item.autoEnabled = false; item.queueOrder = 0; item.reverseStatus = "success"; item.wordedAt = new Date().toISOString(); }
+    item.promptWrittenAt = changedAt; item.wordedAt = changedAt;
+    if (item.folder === "pending") { moveCache(item, "worded"); item.folder = "worded"; item.autoEnabled = false; item.queueOrder = 0; item.reverseStatus = "success"; }
   }
   if (body.customInstruction !== undefined) item.customInstruction = String(body.customInstruction || "").slice(0,4000);
   if (body.preset !== undefined) {
@@ -683,7 +753,7 @@ app.post("/api/reverse/:id/result", (req, res) => {
     const prompt=String(req.body?.prompt||'').trim(),preset=String(req.body?.resolvedPreset||chosenExpansion(manual.preset));
     if(!expansionNames().includes(preset)||(manual.preset!=='随机'&&preset!==(chosenExpansion(manual.preset))))return res.status(400).json({error:'Preset mismatch'});
     if(prompt.length<(preset==='瑶光真人'?45:250))return res.status(422).json({error:'Prompt too short'});
-    manual.positive=prompt.slice(0,100000);manual.folder='worded';manual.wordedAt=new Date().toISOString();manual.autoEnabled=false;manual.reverseStatus='success';manual.reverseError='';saveWordIndex(list);return res.json({ok:true,item:manual});
+    manual.positive=prompt.slice(0,100000);manual.folder='worded';manual.promptWrittenAt=new Date().toISOString();manual.wordedAt=manual.promptWrittenAt;manual.autoEnabled=false;manual.reverseStatus='success';manual.reverseError='';saveWordIndex(list);return res.json({ok:true,item:manual});
   }
   if (!item || item.folder !== "pending" || !item.autoEnabled || item.reverseStatus !== "processing") return res.status(409).json({error:"Item is not processing in the queue"});
   const prompt = String(req.body?.prompt || "").trim();
@@ -692,6 +762,7 @@ app.post("/api/reverse/:id/result", (req, res) => {
   const minimum = preset === "瑶光真人" ? 45 : 250;
   if (prompt.length < minimum) return res.status(422).json({error:`Prompt too short (minimum ${minimum} characters)`});
   item.prompt = prompt.slice(0, 100000); item.resolvedPreset = preset;
+  item.promptWrittenAt = new Date().toISOString(); item.wordedAt = item.promptWrittenAt;
   moveCache(item, "worded"); item.folder = "worded";
   item.reverseStatus = "success"; item.reverseError = ""; item.reverseStartedAt = ""; item.autoEnabled = false;
   renumberReverseQueue();
@@ -1071,7 +1142,21 @@ const META_INDEX = path.join(META_DIR, "index.json");
 function readMetaIndex() { try { const list=JSON.parse(fs.readFileSync(META_INDEX,'utf8'));return Array.isArray(list)?list:[]; } catch { return []; } }
 function saveMetaIndex(list) { fs.mkdirSync(META_DIR,{recursive:true});fs.writeFileSync(META_INDEX,JSON.stringify(list,null,2)); }
 const WORD_INDEX = path.join(WORDED_IMAGE_DIR, "index.json");
-function readWordIndex() { try { const list=JSON.parse(fs.readFileSync(WORD_INDEX,'utf8'));return Array.isArray(list)?list:[]; } catch { return []; } }
+function readWordIndex() {
+  try {
+    const list=JSON.parse(fs.readFileSync(WORD_INDEX,'utf8'));
+    if (!Array.isArray(list)) return [];
+    let changed=false;
+    for (const item of list) {
+      if (!item.promptWrittenAt && item.positive?.trim()) {
+        item.promptWrittenAt = String(item.source === '手写' ? (item.createdAt || item.wordedAt || '') : (item.wordedAt || item.createdAt || item.created_at || ''));
+        changed = changed || Boolean(item.promptWrittenAt);
+      }
+    }
+    if (changed) saveWordIndex(list);
+    return list;
+  } catch { return []; }
+}
 function saveWordIndex(list) { fs.mkdirSync(WORDED_IMAGE_DIR,{recursive:true});fs.writeFileSync(WORD_INDEX,JSON.stringify(list,null,2)); }
 // Migrate earlier hand-written cards, retaining an untouched copy of the old metadata index.
 const oldManual = readMetaIndex().filter(item => item.source === '手写');
@@ -1088,6 +1173,7 @@ if (oldManual.length) {
   saveWordIndex(prior);
   saveMetaIndex(readMetaIndex().filter(item => item.source !== '手写'));
 }
+ensurePromptWrittenTimes();
 app.get('/api/metadata/images',(_req,res)=>res.json(readMetaIndex()));
 app.get('/api/worded/entries',(_req,res)=>res.json(readWordIndex()));
 app.patch('/api/worded/entries/:id',(req,res)=>{
@@ -1095,7 +1181,7 @@ app.patch('/api/worded/entries/:id',(req,res)=>{
   if(!item)return res.status(404).json({error:'有词卡片不存在'});
   const prompt=req.body?.prompt;
   if(typeof prompt!=='string'||!prompt.trim()||prompt.length>100000)return res.status(400).json({error:'提示词不能为空或超过 100000 字符'});
-  item.positive=prompt.trim();if(item.folder==='pending')item.folder='worded';saveWordIndex(list);res.json(item);
+  item.positive=prompt.trim();item.promptWrittenAt=new Date().toISOString();item.wordedAt=item.promptWrittenAt;if(item.folder==='pending'){item.folder='worded';item.autoEnabled=false;item.queueOrder=0;item.reverseStatus='success';}saveWordIndex(list);res.json(item);
 });
 app.patch('/api/worded/state/:id',(req,res)=>{
   const list=readWordIndex(), item=list.find(x=>x.id===req.params.id);
@@ -1111,6 +1197,8 @@ app.patch('/api/worded/state/:id',(req,res)=>{
     item.folder=folder;item.autoEnabled=folder==='pending';
     item.reverseStatus=folder==='pending'?'idle':'success';
     item.queueOrder=folder==='pending'?Date.now():0;
+    // Moving folders does not rewrite prompt-written time; it is content chronology.
+    if(folder==='completed') item.completedAt=new Date().toISOString();
   }
   saveWordIndex(list);res.json(item);
 });
@@ -1119,7 +1207,8 @@ app.post('/api/worded/entries',(req,res)=>{
   if(!positive)return res.status(400).json({error:'提示词不能为空'});
   const summary=String(req.body?.summary||'').trim().slice(0,200);
   if(!summary && !req.body?.hasImage)return res.status(400).json({error:'请粘贴图片或填写概述'});
-  const item={id:crypto.randomUUID(),name:'手写提示词',createdAt:new Date().toISOString(),source:'手写',positive,
+  const now=new Date().toISOString();
+  const item={id:crypto.randomUUID(),name:'手写提示词',createdAt:now,promptWrittenAt:now,wordedAt:now,source:'手写',positive,
     summary,model:'',negative:'',loras:[],cfg:null,steps:null,sampler:'',scheduler:'',seed:null,denoise:null,
     width:0,height:0,imageExt:'',folder:'worded',autoEnabled:false,queueOrder:0,preset:presets.defaultExpansion,reversePreset:presets.defaultReverse,reverseStatus:'success'};
   const list=readWordIndex();list.unshift(item);saveWordIndex(list);res.status(201).json(item);
