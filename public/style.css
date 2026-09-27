@@ -943,6 +943,7 @@ nav::-webkit-scrollbar { display: none; }
 }
 
 /* Prompt Control Bubble (Copy + Expand) */
+.prompt-control-wrap { width: 100%; min-width: 0; }
 .prompt-control {
   display: flex;
   align-items: stretch;
@@ -979,6 +980,37 @@ nav::-webkit-scrollbar { display: none; }
   display: grid;
   place-items: center;
 }
+
+.prompt-meta { display: flex; justify-content: space-between; gap: 8px; padding: 1px 3px 0; color: var(--text-dim); font-size: 10px; line-height: 1.3; white-space: nowrap; overflow: hidden; }
+.prompt-meta span { overflow: hidden; text-overflow: ellipsis; }
+/* Portrait cards have a narrow side panel: keep preset and count readable on separate rows. */
+.reverse-card.portrait .prompt-meta {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  white-space: normal;
+  overflow: visible;
+}
+.reverse-card.portrait .prompt-meta span {
+  max-width: 100%;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.prompt-char-count { flex: none; }
+.update-dialog { border: 1px solid rgba(255,255,255,.14); border-radius: 14px; padding: 0; width: min(430px, calc(100vw - 28px)); background: #171b23; color: #edf2f7; box-shadow: 0 20px 70px rgba(0,0,0,.55); }
+.update-dialog::backdrop { background: rgba(3,5,8,.62); backdrop-filter: blur(5px); }
+.update-dialog-inner { padding: 22px; }
+.update-dialog h3 { margin: 0 0 8px; font-size: 17px; }
+.update-dialog p { margin: 0 0 16px; color: var(--text-muted); font-size: 12px; }
+.update-version-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 12px; color: var(--text-muted); }
+.update-version-row span { width: 48px; }
+.update-version-row code { flex: 1; padding: 7px 9px; border-radius: 7px; background: rgba(255,255,255,.06); color: #dbeafe; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.update-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.update-dialog-actions button { border: 1px solid rgba(255,255,255,.14); border-radius: 8px; background: rgba(255,255,255,.07); color: #e8edf4; padding: 7px 10px; cursor: pointer; font-size: 12px; }
+.update-dialog-actions button:hover { background: rgba(255,255,255,.14); }
+.update-dialog-actions .danger { color: #fca5a5; }
 
 /* Non-image panel action bar (Worded & Completed folders) */
 .panel-actions-bar {
@@ -1093,6 +1125,48 @@ nav::-webkit-scrollbar { display: none; }
   border-color: rgba(255, 51, 102, 0.5) !important;
   color: #ff477e !important;
   box-shadow: none !important;
+}
+
+/* Pending queue picture actions: return to Original Favorites sits left of the heart. */
+.pending-picture-actions {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pending-picture-actions .pending-back-button,
+.pending-picture-actions .favorite-button {
+  position: static !important;
+  inset: auto !important;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  margin: 0;
+}
+.pending-picture-actions .pending-back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  background: rgba(15, 18, 24, 0.78);
+  color: #6ee7b7;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition: transform .15s ease, background .15s ease, border-color .15s ease;
+}
+.pending-picture-actions .pending-back-button:hover {
+  transform: scale(1.1);
+  background: rgba(16, 185, 129, .22);
+  border-color: rgba(110, 231, 183, .8);
+  color: #d1fae5;
 }
 
 /* Worded delete button hidden (now inside right click menu) */

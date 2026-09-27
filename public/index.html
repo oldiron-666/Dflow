@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>DFlow / PFlow</title>
-  <link rel="stylesheet" href="/style.css?v=20260926-06">
+  <link rel="stylesheet" href="/style.css?v=20260927-04">
 </head>
 <body>
 <header>
@@ -238,6 +238,19 @@
   <img id="lightboxImage" alt="高清预览"><div id="lightboxHint">点击空白处关闭</div>
 </div>
 <div id="toast"></div>
-<script type="module" src="/app.js?v=20260926-14"></script>
+<dialog id="updateDialog" class="update-dialog">
+  <div class="update-dialog-inner">
+    <h3>发现新版本</h3>
+    <p>GitHub 上有更新版本，是否稍后更新？</p>
+    <div class="update-version-row"><span>当前</span><code class="update-current"></code></div>
+    <div class="update-version-row"><span>GitHub</span><code class="update-latest"></code></div>
+    <div class="update-dialog-actions">
+      <button id="updateLater" type="button">稍后提醒</button>
+      <button id="updateSkipOnce" type="button">跳过这个版本</button>
+      <button id="updateSkipForever" type="button" class="danger">永久不提醒</button>
+    </div>
+  </div>
+</dialog>
+<script type="module" src="/app.js?v=20260927-05"></script>
 </body>
 </html>
