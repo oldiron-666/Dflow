@@ -9,7 +9,7 @@ import { DEFAULT_REVERSE } from './reverse-workflow.js';
 const port = Number(process.env.DFLOW_PORT || 4173);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error('DFLOW_PORT 无效');
 const base = `http://127.0.0.1:${port}`;
-const server = new McpServer({ name: 'dflow-local', version: '0.1.0' });
+const server = new McpServer({ name: 'dflow-local', version: '0.2.0' });
 const text = value => ({ content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] });
 const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
 let sessionId = null;
