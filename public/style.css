@@ -519,6 +519,19 @@ nav::-webkit-scrollbar { display: none; }
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+.favorite-folders .cache-retry-all {
+  border-color: rgba(251, 191, 36, 0.35);
+  color: #fcd34d;
+}
+.favorite-folders .cache-retry-all:hover:not(:disabled) {
+  border-color: rgba(251, 191, 36, 0.7);
+  color: #fef3c7;
+}
+.favorite-folders .cache-retry-all:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .favorite-folders span {
   font-size: 11px;
   color: var(--text-dim);
@@ -773,6 +786,22 @@ nav::-webkit-scrollbar { display: none; }
   line-height: 1;
   pointer-events: none;
 }
+
+.card .cache-retry-button {
+  position: absolute;
+  left: 9px;
+  bottom: 34px;
+  z-index: 6;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 5px;
+  padding: 4px 7px;
+  color: #f8fafc;
+  background: rgba(15, 23, 42, 0.88);
+  font-size: 11px;
+  cursor: pointer;
+}
+.card .cache-retry-button:hover { background: rgba(30, 41, 59, 0.96); }
+.card .cache-retry-button:disabled { opacity: 0.55; cursor: wait; }
 
 /* ==========================================================================
    Reverse Cards (Pending, Worded, Completed)

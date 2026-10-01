@@ -10,3 +10,12 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+
+# Local prompt scratch files and secrets
+temp_prompt_*.txt
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.token

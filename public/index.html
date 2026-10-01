@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>DFlow / PFlow</title>
-  <link rel="stylesheet" href="/style.css?v=20260927-05">
+  <link rel="stylesheet" href="/style.css?v=20261001-02">
 </head>
 <body>
 <header>
@@ -85,6 +85,7 @@
   <button type="button" data-folder="pending">待反推 <span id="pendingCount">0</span></button>
   <button type="button" data-folder="worded">有词区 <span id="wordedCount">0</span></button>
   <button type="button" data-folder="completed">已完成 <span id="completedCount">0</span></button>
+  <button type="button" id="retryMissingCache" class="cache-retry-all" disabled>重新下载未缓存</button>
   <button type="button" id="manualWorded">手写提示词</button>
 </div>
 <div id="metadataUpload" hidden><label>导入 ComfyUI PNG（支持多选）<input id="metadataFiles" type="file" accept="image/png,.png" multiple></label><span>需图片本身保留工作流／生成信息；网站预览图通常不含元数据。</span></div>
@@ -251,6 +252,6 @@
     </div>
   </div>
 </dialog>
-<script type="module" src="/app.js?v=20260927-05"></script>
+<script type="module" src="/app.js?v=20261001-02"></script>
 </body>
 </html>

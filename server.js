@@ -15,19 +15,39 @@ app.use(express.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 const APP_VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).version || "0.1.0"; } catch { return "0.1.0"; } })();
 const LOCAL_COMMIT = (() => { try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: __dirname, encoding: "utf8", windowsHide: true }).trim(); } catch { return ""; } })();
+const GITHUB_REPO = "oldiron-666/Dflow";
+const GITHUB_BRANCH = "main";
+const VERSION_HEADERS = { "Accept": "application/vnd.github+json", "User-Agent": "DFlow-Version-Checker/1.0" };
 let versionCheckCache = { at: 0, latest: null };
 app.get("/api/version", async (_req, res) => {
   const now = Date.now();
   if (!versionCheckCache.latest || now - versionCheckCache.at > 300000) {
     try {
-      const response = await fetch("https://api.github.com/repos/oldiron-666/Dflow/commits/main", { headers: { "Accept": "application/vnd.github+json", "User-Agent": "DFlow-Version-Checker/1.0" }, signal: AbortSignal.timeout(8000) });
-      if (!response.ok) throw Error(`GitHub HTTP ${response.status}`);
-      const commit = await response.json();
-      versionCheckCache = { at: now, latest: { commit: String(commit.sha || ""), message: String(commit.commit?.message || "").split("\n")[0], date: commit.commit?.committer?.date || "" } };
-    } catch (error) { if (!versionCheckCache.latest) return res.json({ ok: false, error: `无法读取 GitHub 版本：${error.message}`, current: { version: APP_VERSION, commit: LOCAL_COMMIT } }); }
+      const [commitResponse, packageResponse] = await Promise.all([
+        fetch(`https://api.github.com/repos/${GITHUB_REPO}/commits/${GITHUB_BRANCH}`, { headers: VERSION_HEADERS, signal: AbortSignal.timeout(8000) }),
+        fetch(`https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}/package.json`, { headers: VERSION_HEADERS, signal: AbortSignal.timeout(8000) })
+      ]);
+      const latest = {};
+      if (commitResponse.ok) {
+        const commit = await commitResponse.json();
+        latest.commit = String(commit.sha || "");
+        latest.message = String(commit.commit?.message || "").split("\n")[0];
+        latest.date = commit.commit?.committer?.date || "";
+      }
+      if (packageResponse.ok) {
+        const packageInfo = await packageResponse.json();
+        latest.version = String(packageInfo.version || "");
+      }
+      if (!latest.commit && !latest.version) throw Error(`GitHub HTTP ${commitResponse.status}/${packageResponse.status}`);
+      versionCheckCache = { at: now, latest };
+    } catch (error) {
+      if (!versionCheckCache.latest) return res.json({ ok: false, error: `\u65e0\u6cd5\u8bfb\u53d6 GitHub \u7248\u672c\uff1a${error.message}`, current: { version: APP_VERSION, commit: LOCAL_COMMIT } });
+    }
   }
   const latest = versionCheckCache.latest;
-  res.json({ ok: true, current: { version: APP_VERSION, commit: LOCAL_COMMIT }, latest, updateAvailable: Boolean(latest?.commit && LOCAL_COMMIT && latest.commit !== LOCAL_COMMIT) });
+  const commitChanged = Boolean(latest?.commit && (!LOCAL_COMMIT || latest.commit !== LOCAL_COMMIT));
+  const versionChanged = Boolean(latest?.version && latest.version !== APP_VERSION);
+  res.json({ ok: true, current: { version: APP_VERSION, commit: LOCAL_COMMIT }, latest, updateAvailable: commitChanged || versionChanged });
 });
 
 const DATA_DIR = process.env.DFLOW_DATA_DIR ? path.resolve(process.env.DFLOW_DATA_DIR) : path.join(__dirname, "data");
@@ -546,44 +566,65 @@ app.put("/api/preferences", (req, res) => {
   res.json({ ok: true, preferences: sharedState.preferences, updatedAt: sharedState.updatedAt });
 });
 app.put("/api/favorites", (req, res) => {
-  const values = Array.isArray(req.body?.favorites) ? req.body.favorites : [];
-  // Browser copies may be stale: preserve worker-owned results and disk metadata.
-  const oldById = new Map(sharedState.favorites.map(item => [String(item.id), item]));
-  sharedState.favorites = values.map(item => {
-    const prior = oldById.get(String(item?.id));
-    const incoming = prior ? { ...item, folder: prior.folder, completed: prior.completed,
-      preset: prior.preset, reversePreset:prior.reversePreset, autoEnabled: prior.autoEnabled, queueOrder: prior.queueOrder, prompt: prior.prompt,
-      resolvedPreset: prior.resolvedPreset, customInstruction: prior.customInstruction, reverseStatus: prior.reverseStatus,
-      reverseError: prior.reverseError, cacheStatus: prior.cacheStatus,
-      cacheFile: prior.cacheFile, cacheError: prior.cacheError, reverseStartedAt: prior.reverseStartedAt, promptWrittenAt: prior.promptWrittenAt, wordedAt: prior.wordedAt, completedAt: prior.completedAt, createdAt: prior.createdAt, updatedAt: prior.updatedAt } : item;
-    if (incoming && !incoming.createdAt) incoming.createdAt = incoming.created_at || new Date().toISOString();
-    return cleanFavorite(incoming);
-  }).filter(Boolean).slice(0, 5000);
-  const kept = new Set(sharedState.favorites.map(item => String(item.id)));
-  for (const prior of oldById.values()) {
-    if (kept.has(String(prior.id))) continue;
-    const file = imagePath(prior);
-    if (file) fs.rmSync(file, {force:true});
-  }
-  for (const item of sharedState.favorites) {
-    if (item.cacheStatus === "ready" && !fs.existsSync(imagePath(item) || "")) {
-      item.cacheFile = ""; item.cacheStatus = "idle"; item.cacheError = "";
+  try {
+    const values = Array.isArray(req.body?.favorites) ? req.body.favorites : [];
+    // Browser copies may be stale: preserve worker-owned results and disk metadata.
+    const oldById = new Map(sharedState.favorites.map(item => [String(item.id), item]));
+    sharedState.favorites = values.map(item => {
+      const prior = oldById.get(String(item?.id));
+      const incoming = prior ? { ...item, folder: prior.folder, completed: prior.completed,
+        preset: prior.preset, reversePreset:prior.reversePreset, autoEnabled: prior.autoEnabled, queueOrder: prior.queueOrder, prompt: prior.prompt,
+        resolvedPreset: prior.resolvedPreset, customInstruction: prior.customInstruction, reverseStatus: prior.reverseStatus,
+        reverseError: prior.reverseError, cacheStatus: prior.cacheStatus,
+        cacheFile: prior.cacheFile, cacheError: prior.cacheError, reverseStartedAt: prior.reverseStartedAt, promptWrittenAt: prior.promptWrittenAt, wordedAt: prior.wordedAt, completedAt: prior.completedAt, createdAt: prior.createdAt, updatedAt: prior.updatedAt } : item;
+      if (incoming && !incoming.createdAt) incoming.createdAt = incoming.created_at || new Date().toISOString();
+      return cleanFavorite(incoming);
+    }).filter(Boolean).slice(0, 5000);
+    const kept = new Set(sharedState.favorites.map(item => String(item.id)));
+    for (const prior of oldById.values()) {
+      if (kept.has(String(prior.id))) continue;
+      const file = imagePath(prior);
+      if (file) fs.rmSync(file, {force:true});
     }
+    for (const item of sharedState.favorites) {
+      if (item.cacheStatus === "ready" && !fs.existsSync(imagePath(item) || "")) {
+        item.cacheFile = ""; item.cacheStatus = "idle"; item.cacheError = "";
+      }
+    }
+    const changedAt = new Date().toISOString();
+    for (const item of sharedState.favorites) item.updatedAt = item.updatedAt || changedAt;
+    renumberReverseQueue();
+    writeSharedState();
+    // New and old favorites with no usable cache are both eligible. This also
+    // repairs clients that reconnect after a previous download failure.
+    for (const item of sharedState.favorites) if (item.cacheStatus === "idle") scheduleCache(item.id);
+    res.json({ ok: true, favorites: sharedState.favorites, updatedAt: sharedState.updatedAt });
+  } catch (error) {
+    console.error('保存收藏失败：', error);
+    res.status(500).json({ ok: false, error: error.message || '保存收藏失败' });
   }
-  item.updatedAt = changedAt;
-  renumberReverseQueue();
-  writeSharedState();
-  for (const item of sharedState.favorites) if (item.cacheStatus === "idle" && item.folder !== "original") scheduleCache(item.id);
-  for (const item of sharedState.favorites) if (!oldById.has(String(item.id)) && item.folder === "original") scheduleCache(item.id);
-  res.json({ ok: true, favorites: sharedState.favorites, updatedAt: sharedState.updatedAt });
 });
-// The reverse queue is local to this server. Never fetch originals for it.
+// Missing favorites are downloaded serially, independently of the reverse queue.
 const cacheJobs = new Set();
 let cacheTail = Promise.resolve();
 function favoriteById(id) { return sharedState.favorites.find(item => String(item.id) === String(id)); }
 function imagePath(item) {
   if (!item.cacheFile || !/^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif)$/i.test(item.cacheFile)) return null;
   return path.join(item.folder === "completed" ? COMPLETED_IMAGE_DIR : item.folder === "worded" ? WORDED_IMAGE_DIR : item.folder === "original" ? ORIGINAL_IMAGE_DIR : PENDING_IMAGE_DIR, item.cacheFile);
+}
+function cacheDirectory(folder) {
+  return folder === "completed" ? COMPLETED_IMAGE_DIR : folder === "worded" ? WORDED_IMAGE_DIR : folder === "original" ? ORIGINAL_IMAGE_DIR : PENDING_IMAGE_DIR;
+}
+function hasUsableCache(item) {
+  const file = imagePath(item);
+  return item?.cacheStatus === "ready" && Boolean(file && fs.existsSync(file));
+}
+function resetCacheForRetry(item) {
+  const file = imagePath(item);
+  if (file) fs.rmSync(file, {force:true});
+  item.cacheFile = "";
+  item.cacheStatus = "idle";
+  item.cacheError = "";
 }
 
 function fileCreationTime(file) {
@@ -629,6 +670,7 @@ function ensurePromptWrittenTimes() {
   if (wordChanged) saveWordIndex(list);
 }
 function scheduleCache(id) {
+  id = String(id);
   const item = favoriteById(id);
   if (!item || item.cacheStatus === "ready" || cacheJobs.has(String(id))) return;
   cacheJobs.add(String(id));
@@ -636,30 +678,63 @@ function scheduleCache(id) {
     await new Promise(resolve => setTimeout(resolve, 850));
     const current = favoriteById(id);
     if (!current || current.cacheStatus === 'ready') { cacheJobs.delete(String(id)); return; }
-    current.cacheStatus = "loading"; current.cacheError = ""; writeSharedState();
     let tmp;
     try {
-      const url = new URL(current.large_file_url);
-      const isDanbooru = url.hostname === "donmai.us" || url.hostname.endsWith(".donmai.us");
-      const isPixiv = url.hostname.endsWith("pximg.net") || current.source === 'pixiv';
-      if (!isDanbooru && !isPixiv) throw Error("No valid large image URL");
-      const headers = { "User-Agent": "DFlow/0.1 (local reverse cache)" };
-      if (isPixiv) headers["Referer"] = "https://www.pixiv.net/";
-      const response = await fetch(url, { headers, signal: AbortSignal.timeout(60000) });
-      if (!response.ok) throw Error(`HTTP ${response.status}`);
-      const type = (response.headers.get("content-type") || "").split(";")[0];
-      const ext = {"image/jpeg":"jpg", "image/png":"png", "image/webp":"webp", "image/gif":"gif"}[type];
-      if (!ext) throw Error("Response is not a supported image");
-      const body = Buffer.from(await response.arrayBuffer());
-      if (body.length < 100 || body.length > 60 * 1024 * 1024) throw Error("Image size invalid or over 60 MB");
+      current.cacheStatus = "loading"; current.cacheError = ""; writeSharedState();
+      const sources = [...new Set([current.large_file_url, current.file_url, current.preview_file_url].filter(Boolean))];
+      if (!sources.length) throw Error("No image URL available");
+      // Danbooru's CDN rejects browser-spoofed download headers from this
+      // server's network path. The same lightweight proxy identity used by
+      // /api/image is accepted, while Pixiv still needs a browser UA + referer.
+      const headersFor = isPixiv => isPixiv ? ({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Referer": "https://www.pixiv.net/"
+      }) : ({
+        "User-Agent": "DFlow/0.1",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Cache-Control": "no-cache"
+      });
+      let body = null;
+      let ext = "";
+      let lastError = null;
+      for (const sourceUrl of sources) {
+        try {
+          const url = new URL(sourceUrl);
+          const isDanbooru = url.hostname === "donmai.us" || url.hostname.endsWith(".donmai.us");
+          const isPixiv = url.hostname.endsWith("pximg.net") || url.hostname.endsWith("pixiv.net") || current.source === 'pixiv';
+          if (!isDanbooru && !isPixiv) throw Error("No valid image URL");
+          const response = await fetch(url, { headers: headersFor(isPixiv), redirect: 'follow', signal: AbortSignal.timeout(60000) });
+          if (!response.ok) throw Error(`HTTP ${response.status}`);
+          const type = (response.headers.get("content-type") || "").split(";")[0].toLowerCase();
+          const fromType = {"image/jpeg":"jpg", "image/png":"png", "image/webp":"webp", "image/gif":"gif"}[type];
+          const fromPath = path.extname(url.pathname).replace(/^\./, '').toLowerCase();
+          const candidateExt = fromType || (['jpg','jpeg','png','webp','gif'].includes(fromPath) ? fromPath : '');
+          if (!candidateExt) throw Error("Response is not a supported image");
+          const candidateBody = Buffer.from(await response.arrayBuffer());
+          if (candidateBody.length < 100 || candidateBody.length > 60 * 1024 * 1024) throw Error("Image size invalid or over 60 MB");
+          body = candidateBody;
+          ext = candidateExt;
+          break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (!body || !ext) throw lastError || Error("Unable to download image");
       const latest = favoriteById(id);
       if (!latest || latest.cacheStatus === 'ready') return;
-      const dir = latest.folder === "completed" ? COMPLETED_IMAGE_DIR : latest.folder === "worded" ? WORDED_IMAGE_DIR : latest.folder === "original" ? ORIGINAL_IMAGE_DIR : PENDING_IMAGE_DIR;
+      const dir = cacheDirectory(latest.folder);
       fs.mkdirSync(dir, {recursive:true});
       tmp = path.join(dir, `${id}.${ext}.part`);
       fs.writeFileSync(tmp, body);
       const filename = `${id}.${ext}`;
       fs.renameSync(tmp, path.join(dir, filename)); tmp = null;
+      if (latest.cacheFile && latest.cacheFile !== filename) {
+        const old = path.join(dir, latest.cacheFile);
+        if (old !== path.join(dir, filename)) fs.rmSync(old, {force:true});
+      }
       latest.cacheFile = filename; latest.cacheStatus = "ready"; latest.cacheError = "";
     } catch (error) {
       const latest = favoriteById(id);
@@ -667,18 +742,45 @@ function scheduleCache(id) {
         latest.cacheStatus = "error"; latest.cacheError = error.message;
       }
     } finally {
-      if (tmp) fs.rmSync(tmp, {force:true});
+      if (tmp) { try { fs.rmSync(tmp, {force:true}); } catch (error) { console.error("清理临时缓存失败：", error.message); } }
       cacheJobs.delete(id);
-      writeSharedState();
+      try { writeSharedState(); } catch (error) { console.error('写入缓存状态失败：', error); }
     }
   });
 }
+app.post('/api/favorites/retry-cache', (req, res) => {
+  try {
+    const requestedFolder = String(req.body?.folder || 'all');
+    const allowed = new Set(['all', 'original', 'pending', 'worded', 'completed']);
+    if (!allowed.has(requestedFolder)) return res.status(400).json({ok:false, error:'Invalid folder'});
+    let queued = 0;
+    for (const item of sharedState.favorites) {
+      if (requestedFolder !== 'all' && item.folder !== requestedFolder) continue;
+      if (hasUsableCache(item)) continue;
+      if (cacheJobs.has(String(item.id))) { queued++; continue; }
+      resetCacheForRetry(item);
+      queued++;
+    }
+    const changedAt = new Date().toISOString();
+    for (const item of sharedState.favorites) if (item.cacheStatus === 'idle') item.updatedAt = changedAt;
+    writeSharedState();
+    for (const item of sharedState.favorites) if (item.cacheStatus === 'idle') scheduleCache(item.id);
+    res.json({ok:true, queued, favorites:sharedState.favorites, updatedAt:sharedState.updatedAt});
+  } catch (error) {
+    console.error('重新下载收藏缓存失败：', error);
+    res.status(500).json({ok:false, error:error.message || '重新下载失败'});
+  }
+});
 function moveCache(item, target) {
   const source = imagePath(item);
   if (source && fs.existsSync(source)) {
-    const destDir = target === "completed" ? COMPLETED_IMAGE_DIR : target === "worded" ? WORDED_IMAGE_DIR : target === "original" ? ORIGINAL_IMAGE_DIR : PENDING_IMAGE_DIR;
+    const destDir = cacheDirectory(target);
     fs.mkdirSync(destDir, {recursive:true});
-    fs.renameSync(source, path.join(destDir, item.cacheFile));
+    const destination = path.join(destDir, item.cacheFile);
+    if (source !== destination) {
+      fs.rmSync(destination, {force:true});
+      fs.renameSync(source, destination);
+    }
   }
 }
 app.patch("/api/favorites/:id", (req, res) => {
@@ -718,7 +820,7 @@ app.patch("/api/favorites/:id", (req, res) => {
     }
     item.autoEnabled = body.autoEnabled;
   }
-  if (body.retryCache && item.folder === "pending") { item.cacheStatus = "idle"; item.cacheError = ""; }
+  if (body.retryCache) resetCacheForRetry(item);
   if (body.retryReverse && item.folder === "pending") { item.reverseStatus = "idle"; item.reverseError = ""; item.autoEnabled = true; item.queueOrder = nextReverseOrder(); }
   renumberReverseQueue();
   writeSharedState();
@@ -1276,6 +1378,7 @@ app.delete('/api/metadata/images/:id',(req,res)=>{
   const old=list.find(x=>x.id===req.params.id);try { fs.unlinkSync(path.join(META_DIR,req.params.id+'.'+(old.imageExt||'png'))); } catch {}
   res.json({ok:true});
 });
+app.use("/api", (_req, res) => res.status(404).json({ok:false, error:"接口不存在，请确认已重启到最新版 DFlow 服务"}));
 app.use((_req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 app.listen(PORT, HOST, () => console.log(`DFlow 已启动：http://${HOST}:${PORT}`));
 
