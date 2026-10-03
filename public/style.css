@@ -939,10 +939,21 @@ nav::-webkit-scrollbar { display: none; }
 }
 
 .reverse-card.pending-card .queue-button {
-  display: inline-grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   width: 26px;
+  min-width: 26px;
+  max-width: 26px;
   height: 26px;
+  flex: 0 0 26px;
+  padding: 0;
+  line-height: 1;
+  text-align: center;
+  vertical-align: middle;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: var(--surface);
@@ -1636,6 +1647,76 @@ dialog.settings-modal::backdrop {
 
 .hidden { display: none !important; }
 
+/* Pixiv board date controls: keep the date selector visible as its own row
+   below the hot-tag bar without pushing the main title/navigation around. */
+.pixiv-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 2px 20px 8px;
+  padding: 8px 12px;
+  min-height: 40px;
+  border: 1px solid rgba(2, 132, 199, 0.28);
+  border-radius: 10px;
+  background: rgba(2, 132, 199, 0.07);
+}
+.pixiv-controls[hidden],
+.pixiv-controls.hidden {
+  display: none !important;
+}
+.pixiv-date-label {
+  color: #bae6fd;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pixiv-datebar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+}
+.pixiv-date-action,
+#pixivDate {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--text-main);
+  padding: 5px 9px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.pixiv-date-action:hover,
+#pixivDate:hover {
+  border-color: rgba(56, 189, 248, 0.62);
+  background: rgba(14, 116, 144, 0.24);
+}
+.pixiv-date-action:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+@media (max-width: 700px) {
+  .pixiv-controls {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 7px;
+    margin-left: 12px;
+    margin-right: 12px;
+  }
+  .pixiv-datebar {
+    justify-content: space-between;
+    overflow-x: auto;
+  }
+  #pixivDate {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+}
+
 /* Metadata upload strip */
 #metadataUpload {
   margin: 8px 20px;
@@ -1863,6 +1944,11 @@ dialog.settings-modal:has(#tabMcp.active) { width: min(1100px, 96vw); }
 .mcp-preset-list { overflow-y: auto; min-height: 100px; max-height: 250px; flex: 1; padding-right: 4px; }
 .mcp-preset-row { border: 1px solid rgba(255,255,255,.09); border-radius: 9px; padding: 8px; margin: 0 0 7px; background: rgba(255,255,255,.025); }
 .mcp-preset-heading, .mcp-session { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.mcp-session { flex-wrap: wrap; }
+.mcp-session-label { min-width: 0; flex: 1 1 180px; }
+.mcp-session-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.mcp-session-offline { color: #e7b66b; padding: 6px 0; }
+.mcp-clear-target { margin-top: 8px; }
 .mcp-preset-heading input { flex: 1; min-width: 0; margin: 0; }
 .mcp-preset-heading button, .mcp-session button { flex: none; }
 .mcp-preset-editor summary { cursor: pointer; color: #a9bdd7; font-size: 11px; padding: 5px 2px 0; }
@@ -1870,6 +1956,9 @@ dialog.settings-modal:has(#tabMcp.active) { width: min(1100px, 96vw); }
 .settings-body .mcp-preset-file { font-size: 11px; padding: 5px; }
 .mcp-session { padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.07); overflow-wrap: anywhere; }
 #mcpSessions { max-height: 250px; overflow-y: auto; font-size: 12px; }
+.dsh-bridge-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.08); font-size: 12px; }
+#dshBridgeStatus { display: block; margin: 6px 0; font-size: 11px; color: #a9bdd7; overflow-wrap: anywhere; }
+#dshSessions { max-height: 220px; overflow-y: auto; font-size: 12px; }
 #tabMcp #mcpConnectionConfig { font-size: 11px; resize: vertical; overflow-wrap: anywhere; }
 .mcp-save-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: flex-end; margin-top: 14px; }
 .mcp-save-row .settings-desc { margin: 0 auto 0 0; font-size: 11px; }
@@ -1877,5 +1966,6 @@ dialog.settings-modal:has(#tabMcp.active) { width: min(1100px, 96vw); }
 
 .reverse-card.pending-card .reverse-actions { flex-wrap: wrap; }
 .reverse-card.pending-card .preset-picker { max-width: none; flex: 1 1 100%; }
+.reverse-card.pending-card .direct-reverse-button { flex-shrink: 0; min-width: 54px; padding: 5px 8px; white-space: nowrap; }
 
 dialog.settings-modal:has(#tabMcp.active) #saveSettings { display: none; }

@@ -26,11 +26,19 @@
 - `list_pending`：读取待反推区队列与缓存、错误、预设和附加要求。
 - `read_pending_image({id})`：把某张**已有本地缓存**的高清图交给视觉 Agent；上限 30 MB，不从 D 站或 P 站重新抓取。
 - `get_reverse_workflow({id})`：返回此图的通用流程、反推预设和扩写预设完整正文；MCP 同时提供 `dflow_reverse` prompt。
+- `claim_direct_reverse({requestId?})`：领取平板或其他局域网浏览器通过「AI直推」提交的单图任务，返回完整的先反推后扩写流程；只领取分配给当前 MCP 会话的任务。完成后必须 `complete_pending`，失败必须 `fail_pending`。
 - `claim_next_pending()`：领取下一张可用图片，同时附带两阶段完整流程和预设正文，状态改成 `processing`。领取之前建议先列队列，领取后按返回 ID 读图并处理；没有可处理项时 `item` 为 null。
 - `complete_pending({id,prompt,resolvedPreset})`：写回完整结果，服务端校验字数与预设，成功后移至有词区。选“随机”时要填写实际采用的预设。
 - `fail_pending({id,reason})`：失败时记录具体原因，图片仍留待反推区，方便之后重试。
+
 - `create_worded_card({prompt,summary?,imagePath?})`：直接写有词区；有图时传 Agent 本机图片的**绝对路径**（PNG/JPEG/WebP），无图时必须填写概述。上传失败会尝试删除半成品卡片。
 - `import_metadata_png({imagePath})`：传本机**原始 PNG**绝对路径，调用 DFlow 现有 ComfyUI/PNG 元数据解析，结果写元数据库；没有元数据则返回错误。
+
+## 平板/局域网「AI直推」
+
+平板打开 `http://电脑局域网IP:4173` 后，进入「待反推」并点击卡片上的「AI直推」，DFlow 会把任务写入服务端队列，已连接的 MCP Agent 领取后执行既有的「先反推、后扩写」流程。结果不会把完整提示词刷到聊天窗口，只显示开始、成功或失败原因；提示词会写回卡片。
+
+登录/设置 → MCP 设置 → 已连接的 Agent 中可点击「设为直推目标」，把直推固定到某个 MCP 会话；若不设置，则发送给当前在线且最近心跳的 Agent。这个固定目标是 MCP 会话/Agent 级别，标准 MCP 无法强制控制 DSH 内部的某个具体聊天窗口；如果 DSH 为每个窗口启动独立 MCP 会话，就可以通过选择对应会话间接固定到该窗口。Agent 离线后任务会显示离线，重新连接后可继续领取。
 
 建议 Agent 的工作顺序：`list_pending` → `claim_next_pending` → `read_pending_image` → 先执行反推预设的忠实观察，再执行扩写预设完整生成 → `complete_pending`；出错时 `fail_pending`，不要编造提示词或忽略失败。若 `processing` 中断，需要在 DFlow 界面重新加入/重试队列后再领取。不要对正在使用的个人数据运行集成测试。
 

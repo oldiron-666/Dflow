@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>DFlow / PFlow</title>
-  <link rel="stylesheet" href="/style.css?v=20261001-02">
+  <link rel="stylesheet" href="/style.css?v=20261003-06">
 </head>
 <body>
 <header>
@@ -30,12 +30,11 @@
       <button class="mode" data-mode="rank" title="近一个月榜单">趋势</button>
       <button class="mode" data-mode="mpixels" title="近一个月按总像素排序">大图</button>
     </div>
-    <div class="nav-group nav-pflow hidden">
-      <button class="mode" data-mode="pixiv-daily">日榜</button>
-      <button class="mode" data-mode="pixiv-weekly">周榜</button>
-      <button class="mode" data-mode="pixiv-monthly">月榜</button>
-      <button class="mode" data-mode="pixiv-ai">AI专榜</button>
-      <button class="mode" data-mode="pixiv-r18">R18日榜</button>
+    <div class="nav-group nav-pflow hidden" aria-label="Pixiv 榜单">
+      <button class="mode" data-pixiv-kind="daily" data-mode="pixiv-daily">日榜</button>
+      <button class="mode" data-pixiv-kind="weekly" data-mode="pixiv-weekly">周榜</button>
+      <button class="mode" data-pixiv-kind="monthly" data-mode="pixiv-monthly">月榜</button>
+      <button class="mode" data-pixiv-kind="ai" data-mode="pixiv-ai">AI榜</button>
     </div>
     <div class="nav-group nav-common">
       <button class="mode favorite-mode" data-mode="favorites">本地收藏 <span id="favoriteCount">0</span></button>
@@ -50,7 +49,7 @@
       </div>
     </div>
     <div class="rating-picker" id="ratingPicker">
-      <button id="ratingButton">分级⌄</button>
+      <button id="ratingButton" aria-haspopup="menu" aria-expanded="false">分级⌄</button>
       <div class="rating-menu">
         <label><input type="checkbox" value="g" checked> <i class="rating-dot dot-g"></i>全年龄</label>
         <label><input type="checkbox" value="s" checked> <i class="rating-dot dot-s"></i>敏感</label>
@@ -80,6 +79,15 @@
   </div>
   <div id="tags" aria-label="热门标签，可多选"></div>
 </section>
+<div id="pixivControls" class="pixiv-controls hidden" role="group" aria-label="Pixiv 榜单日期">
+  <span id="pixivDateLabel" class="pixiv-date-label">榜单日期</span>
+  <div class="pixiv-datebar">
+    <button type="button" id="pixivPrevDay" class="pixiv-date-action">前一天</button>
+    <input id="pixivDate" type="date" aria-label="选择 Pixiv 榜单日期">
+    <button type="button" id="pixivNextDay" class="pixiv-date-action">后一天</button>
+    <button type="button" id="pixivToday" class="pixiv-date-action">今天</button>
+  </div>
+</div>
 <div id="favoriteFolders" class="favorite-folders hidden" aria-label="本地收藏文件夹">
   <button type="button" data-folder="original" class="active">原始收藏</button>
   <button type="button" data-folder="pending">待反推 <span id="pendingCount">0</span></button>
@@ -210,8 +218,11 @@
         </section>
         <section class="mcp-tile mcp-agents" aria-labelledby="mcpAgentsTitle">
           <div class="mcp-tile-title"><h4 id="mcpAgentsTitle">已连接的 Agent</h4><button type="button" id="refreshMcpSessions" class="btn-subtle">刷新</button></div>
-          <p class="settings-desc">断开只影响当前会话；客户端可能自动重连。</p>
+          <p class="settings-desc">网页 AI直推会先唤起下面选定的 DSH 窗口，再由该窗口调用 dflow-local MCP 领取任务。断开只影响当前会话，客户端可能自动重连。</p>
           <div id="mcpSessions" aria-live="polite">正在读取…</div>
+          <div class="dsh-bridge-head"><strong>DSH 直推窗口</strong><button type="button" id="refreshDshSessions" class="btn-subtle">刷新</button></div>
+          <div id="dshBridgeStatus" class="status-inline" aria-live="polite">正在检测 DSH Bridge…</div>
+          <div id="dshSessions" aria-live="polite">正在读取 DSH 窗口…</div>
         </section>
         <section class="mcp-tile mcp-reverse" aria-labelledby="mcpReverseTitle">
           <div class="mcp-tile-title"><h4 id="mcpReverseTitle">反推预设</h4><button type="button" id="addReversePreset" class="btn-subtle">新增</button></div>
@@ -252,6 +263,6 @@
     </div>
   </div>
 </dialog>
-<script type="module" src="/app.js?v=20261001-02"></script>
+<script type="module" src="/app.js?v=20261003-06"></script>
 </body>
 </html>

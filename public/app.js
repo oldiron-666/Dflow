@@ -8,6 +8,7 @@ const searchInput = document.querySelector('#search');
 
 const FAVORITES_KEY = 'dflowFavoritesV1';
 const PREFERENCES_KEY = 'dflowPreferencesV1';
+const DIRECT_SESSION_KEY = 'dflowDirectSessionId';
 const ratingNames = { g: '全年龄', s: '敏感', q: '较敏感', e: '成人' };
 let presetConfig = { reverse:[{name:'通用反推'}], expansion:[{name:'通用扩写'}], defaultReverse:'通用反推', defaultExpansion:'通用扩写' };
 const expansionNames = () => [...presetConfig.expansion.map(item => item.name), '随机'];
@@ -26,10 +27,57 @@ const pixivModeMap = {
   'pixiv-weekly': 'weekly',
   'pixiv-monthly': 'monthly',
   'pixiv-ai': 'daily_ai',
-  'pixiv-r18': 'daily_r18'
+  'pixiv-r18-daily': 'daily_r18',
+  'pixiv-r18-weekly': 'weekly_r18',
+  'pixiv-r18-ai': 'daily_r18_ai'
 };
+const PIXIV_MODES = new Set(Object.keys(pixivModeMap));
+const PIXIV_R18_MODES = new Set(['pixiv-r18-daily', 'pixiv-r18-weekly', 'pixiv-r18-ai']);
+const PIXIV_KINDS = ['daily', 'weekly', 'monthly', 'ai'];
+const PIXIV_RATING_KEY = 'dflow_pixiv_rating_v1';
+const PIXIV_DATE_KEY = 'dflow_pixiv_dates_v1';
+function localIsoDate(date = new Date()) {
+  const value = new Date(date);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+function readPixivDates() {
+  try { const parsed = JSON.parse(localStorage.getItem(PIXIV_DATE_KEY) || '{}'); return parsed && typeof parsed === 'object' ? parsed : {}; }
+  catch { return {}; }
+}
+function pixivDate(modeName = mode) {
+  const dates = readPixivDates();
+  const date = dates[modeName];
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? String(date) : localIsoDate();
+}
+function savePixivDate(modeName, date) {
+  const dates = readPixivDates(); dates[modeName] = date; localStorage.setItem(PIXIV_DATE_KEY, JSON.stringify(dates));
+}
+function pixivKind(modeName = mode) {
+  if (modeName === 'pixiv-daily' || modeName === 'pixiv-r18-daily') return 'daily';
+  if (modeName === 'pixiv-weekly' || modeName === 'pixiv-r18-weekly') return 'weekly';
+  if (modeName === 'pixiv-monthly') return 'monthly';
+  if (modeName === 'pixiv-ai' || modeName === 'pixiv-r18-ai') return 'ai';
+  return 'daily';
+}
+function pixivModeForKind(kind = 'daily', rating = pixivRating) {
+  const safeMap = { daily: 'pixiv-daily', weekly: 'pixiv-weekly', monthly: 'pixiv-monthly', ai: 'pixiv-ai' };
+  // Pixiv R18 currently exposes today / this week / AI only in this UI.
+  // There is no R18 monthly button, so switching from the safe monthly board
+  // must land on today's R18 board instead of silently reusing the weekly one.
+  const r18Map = { daily: 'pixiv-r18-daily', weekly: 'pixiv-r18-weekly', monthly: 'pixiv-r18-daily', ai: 'pixiv-r18-ai' };
+  return (rating === 'r18' ? r18Map : safeMap)[kind] || (rating === 'r18' ? r18Map.daily : safeMap.daily);
+}
+function pixivRatingMode() {
+  return pixivRating === 'r18' ? 'r18' : 'safe';
+}
+
 
 let station = localStorage.getItem('dflow_station') || 'dflow';
+let pixivRating = localStorage.getItem(PIXIV_RATING_KEY) === 'r18' ? 'r18' : 'safe';
+let dflowRatings = new Set(['g', 's', 'q', 'e']);
 let previewPost = null;
 let previewCard = null;
 let mode = 'latest';
@@ -50,6 +98,10 @@ let preferenceSaveTimer = 0;
 let restoringSharedState = true;
 let sharedUpdatedAt = '';
 let loadFailed = false;
+let wordedGalleryRequest = 0;
+let galleryRenderRequest = 0;
+let favoriteStateRevision = 0;
+let sharedFavoritesPulling = false;
 let lastRequestFinishedAt = 0;
 let pendingRatingResults = new Map();
 let currentPosts = [];
@@ -150,7 +202,7 @@ const searchOrderByMode = {
   mpixels: 'age:<1month order:mpixels'
 };
 function isPixivMode(value = mode) {
-  return ['pixiv-daily', 'pixiv-weekly', 'pixiv-monthly', 'pixiv-ai', 'pixiv-r18'].includes(value);
+  return PIXIV_MODES.has(value);
 }
 function isPopularMode(value = mode) {
   return value.startsWith('popular-');
@@ -202,8 +254,15 @@ async function requestPosts(url, signal) {
     if (response.ok) {
       const posts = await response.json();
       if (!Array.isArray(posts)) throw Error('图片接口返回格式错误：预期图片列表');
-      if (url.startsWith('/api/pixiv/ranking') && response.headers.get('X-Pixiv-Has-More') === 'false') {
-        Object.defineProperty(posts, 'hasNextPage', {value:false});
+      if (url.startsWith('/api/pixiv/ranking')) {
+        const effectiveDate = response.headers.get('X-Pixiv-Effective-Date');
+        if (/^\d{4}-\d{2}-\d{2}$/.test(String(effectiveDate || '')) && isPixivMode(mode)) {
+          savePixivDate(mode, effectiveDate);
+          updatePixivControls();
+        }
+        if (response.headers.get('X-Pixiv-Has-More') === 'false') {
+          Object.defineProperty(posts, 'hasNextPage', {value:false});
+        }
       }
       return posts;
     }
@@ -218,7 +277,7 @@ async function requestPosts(url, signal) {
       await sleep(3000, signal);
       continue;
     }
-    throw Error(detail.message || detail.detail || `请求失败 (${response.status})`);
+    throw Error(detail.message || detail.error || detail.detail || `请求失败 (${response.status})`);
   }
   throw Error('网络连接失败');
 }
@@ -226,11 +285,13 @@ async function getPosts(tags, page, limit = 36, signal) {
   if (station === 'pflow' && !['favorites', 'metadata'].includes(mode)) {
     if (manualSearchTags) {
       const p = page || 1;
-      return requestPosts(`/api/pixiv/search?word=${encodeURIComponent(manualSearchTags)}&page=${p}`, signal);
+      const rating = encodeURIComponent(pixivRatingMode());
+      return requestPosts(`/api/pixiv/search?word=${encodeURIComponent(manualSearchTags)}&page=${p}&rating=${rating}`, signal);
     }
     const pixMode = pixivModeMap[mode] || 'daily';
     const p = page || 1;
-    return requestPosts(`/api/pixiv/ranking?mode=${encodeURIComponent(pixMode)}&page=${p}`, signal);
+    const date = encodeURIComponent(pixivDate(mode));
+    return requestPosts(`/api/pixiv/ranking?mode=${encodeURIComponent(pixMode)}&date=${date}&page=${p}`, signal);
   }
   if (isPopularMode()) {
     const scale = mode.slice('popular-'.length);
@@ -249,6 +310,14 @@ async function getPosts(tags, page, limit = 36, signal) {
 function imageSrc(url) {
   return url ? `/api/image?url=${encodeURIComponent(url)}` : '';
 }
+function favoriteCacheSrc(id, version = '') {
+  const suffix = version ? `?v=${encodeURIComponent(String(version))}` : '';
+  return `/api/reverse/image/${encodeURIComponent(String(id))}${suffix}`;
+}
+function wordedImageSrc(item) {
+  if (!item?.imageExt) return '';
+  return `/api/worded/images/${encodeURIComponent(String(item.id))}?v=${encodeURIComponent(String(item.imageExt))}`;
+}
 function readLocalFavorites() {
   try {
     const value = JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]');
@@ -261,6 +330,10 @@ function readFavorites() {
   return favoriteCache;
 }
 async function saveFavorites(items) {
+  // A PUT can stay in flight while a PATCH, another device pull, or a second
+  // click changes the same collection.  Keep the local revision so a late PUT
+  // response cannot restore an older favorite list (or its stale cache flags).
+  const revision = ++favoriteStateRevision;
   favoriteCache = items;
   localStorage.setItem(FAVORITES_KEY, JSON.stringify(items));
   updateFavoriteCount();
@@ -272,6 +345,7 @@ async function saveFavorites(items) {
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw Error(result.error || `HTTP ${response.status}`);
+    if (revision !== favoriteStateRevision) return;
     sharedUpdatedAt = result.updatedAt || sharedUpdatedAt;
     if (Array.isArray(result.favorites)) {
       favoriteCache = result.favorites;
@@ -279,7 +353,7 @@ async function saveFavorites(items) {
       updateFavoriteCount();
     }
   } catch (error) {
-    toast(`收藏已保存在本机，局域网同步失败：${error.message}`);
+    if (revision === favoriteStateRevision) toast(`收藏已保存在本机，局域网同步失败：${error.message}`);
   }
 }
 function favoriteFields(post) {
@@ -331,6 +405,23 @@ function sortableTime(value) {
   const parsed = Date.parse(String(value));
   return Number.isFinite(parsed) ? parsed : 0;
 }
+const MAX_DISPLAY_QUEUE_ORDER = 1000000;
+function displayQueueOrder(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 && number <= MAX_DISPLAY_QUEUE_ORDER ? number : null;
+}
+function pendingQueueActive(item) {
+  return item?.autoEnabled !== false;
+}
+function comparePendingRows(a, b) {
+  const aActive = pendingQueueActive(a.value);
+  const bActive = pendingQueueActive(b.value);
+  if (aActive !== bActive) return Number(!aActive) - Number(!bActive);
+  if (aActive) {
+    return (displayQueueOrder(a.value.queueOrder) ?? Infinity) - (displayQueueOrder(b.value.queueOrder) ?? Infinity) || a.index - b.index;
+  }
+  return a.index - b.index;
+}
 function galleryItemTime(item, folder) {
   // Worded keeps prompt chronology; completed keeps the release chronology.
   const values = folder === 'completed'
@@ -357,19 +448,41 @@ function favoriteVisibleItems() {
         ((a.queueOrder || 999999) - (b.queueOrder || 999999))
       : compareGalleryItems(a, b, favoriteFolder));
 }
+function invalidateGalleryRequests() {
+  clearTimeout(nextLoadTimer);
+  requestController?.abort();
+  requestController = null;
+  generation++;
+  galleryRenderRequest++;
+  wordedGalleryRequest++;
+  loading = false;
+  pendingRatingResults.clear();
+}
 function refreshFavoriteGallery(preserveScroll = true) {
   if (mode !== 'favorites') return;
-  if (['worded','pending','completed'].includes(favoriteFolder)) { loadWordedGallery(preserveScroll); return; }
+  // A folder refresh is authoritative. Invalidate both the normal API load
+  // and the special worded-gallery request so a late response cannot restore
+  // the previous card renderer.
+  invalidateGalleryRequests();
+  const requestedFolder = favoriteFolder;
+  const renderId = galleryRenderRequest;
+  if (['worded','pending','completed'].includes(requestedFolder)) {
+    loadWordedGallery(preserveScroll, renderId);
+    return;
+  }
   const top = scrollY;
   const posts = favoriteVisibleItems();
+  if (renderId !== galleryRenderRequest || mode !== 'favorites' || favoriteFolder !== requestedFolder) return;
   resetColumns();
   currentPosts = posts.slice();
-  render(posts);
+  render(posts, {favoriteFolder: requestedFolder});
   ended = true;
   sentinel.classList.remove('loading');
   sentinel.classList.add('done');
-  statusEl.textContent = posts.length ? `显示 ${posts.length} 个${folderName[favoriteFolder]}` : `还没有${folderName[favoriteFolder]}图片`;
-  if (preserveScroll) requestAnimationFrame(() => scrollTo({ top }));
+  statusEl.textContent = posts.length ? `显示 ${posts.length} 个${folderName[requestedFolder]}` : `还没有${folderName[requestedFolder]}图片`;
+  if (preserveScroll) requestAnimationFrame(() => {
+    if (renderId === galleryRenderRequest && mode === 'favorites' && favoriteFolder === requestedFolder) scrollTo({ top });
+  });
 }
 function removeVisibleCard(id) {
   const top = scrollY;
@@ -394,11 +507,17 @@ function removeVisibleCard(id) {
   requestAnimationFrame(() => scrollTo({top}));
 }
 async function patchFavorite(id, changes) {
+  const revision = ++favoriteStateRevision;
   const response = await fetch(`/api/favorites/${encodeURIComponent(id)}`, {
     method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(changes)
   });
   const result = await response.json();
   if (!response.ok) throw Error(result.error || `HTTP ${response.status}`);
+  // Do not let an older PATCH response overwrite a newer local operation.  The
+  // caller still receives the current local item, so its card cannot regress.
+  if (revision !== favoriteStateRevision) {
+    return favoriteCache.find(item => String(item.id) === String(id)) || result.favorite;
+  }
   const index = favoriteCache.findIndex(item => String(item.id) === String(id));
   if (index >= 0) favoriteCache[index] = result.favorite;
   if (Array.isArray(result.queue)) {
@@ -415,7 +534,20 @@ async function patchFavorite(id, changes) {
   for (const key of viewCache.keys()) if (key.startsWith('favorites|')) viewCache.delete(key);
   return result.favorite;
 }
+async function patchWordedState(id, changes) {
+  const response = await fetch(`/api/worded/state/${encodeURIComponent(String(id))}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify(changes || {})
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw Error(result.error || `HTTP ${response.status}`);
+  return result.entry || result.item || result;
+}
 async function moveFavorite(post, target) {
+  // Invalidate any in-flight folder read before changing the source of truth.
+  // Its late response must not repaint the card in the previous UI shape.
+  invalidateGalleryRequests();
   const before = postFolder(post);
   if (before === target) return;
   try {
@@ -439,6 +571,7 @@ function updateCompletedButtons(id) {
   });
 }
 async function toggleFavorite(post) {
+  invalidateGalleryRequests();
   const items = readFavorites();
   const index = items.findIndex(item => String(item.id) === String(post.id));
   const before = index >= 0 ? { item: { ...items[index] }, index } : null;
@@ -506,7 +639,11 @@ async function load(reset = false) {
   if (reset) {
     clearTimeout(nextLoadTimer);
     requestController?.abort();
+    requestController = null;
     generation++;
+    ++galleryRenderRequest;
+    ++wordedGalleryRequest;
+    loading = false;
     cursor = '';
     pageNo = 1;
     ended = false;
@@ -516,20 +653,23 @@ async function load(reset = false) {
     resetColumns();
     scrollTo({ top: 0 });
   }
+  const run = generation;
+  const requestedMode = mode;
+  const requestedStation = station;
+  const requestedFolder = favoriteFolder;
   document.querySelector('#metadataUpload').hidden = mode !== 'metadata';
   if (mode === 'metadata') { await loadMetadataGallery(); return; }
   if (mode === 'favorites' && ['worded','pending','completed'].includes(favoriteFolder)) { await loadWordedGallery(); return; }
   if (mode === 'favorites') {
     const posts = favoriteVisibleItems();
     currentPosts = posts.slice();
-    render(posts);
+    render(posts, {favoriteFolder: requestedFolder});
     ended = true;
     sentinel.classList.remove('loading');
     sentinel.classList.add('done');
-    statusEl.textContent = posts.length ? `显示 ${posts.length} 个${folderName[favoriteFolder]}` : `还没有${folderName[favoriteFolder]}图片`;
+    statusEl.textContent = posts.length ? `显示 ${posts.length} 个${folderName[requestedFolder]}` : `还没有${folderName[requestedFolder]}图片`;
     return;
   }
-  const run = generation;
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -559,7 +699,7 @@ async function load(reset = false) {
       for (const rating of ratings) {
         if (!pendingRatingResults.has(rating)) {
           const posts = await getPosts(queryTags(rating), isPagedMode() ? pageNo : null, perRatingLimit, controller.signal);
-          if (run !== generation) return;
+           if (run !== generation || mode !== requestedMode || station !== requestedStation || favoriteFolder !== requestedFolder) return;
           pendingRatingResults.set(rating, posts);
         }
         results.push(pendingRatingResults.get(rating));
@@ -575,11 +715,18 @@ async function load(reset = false) {
     if (station !== 'pflow') {
       const selectedRatings = new Set(ratings);
       posts = posts.filter(post => selectedRatings.has(post.rating || 'g'));
+    } else if (pixivRatingMode() === 'r18') {
+      // Pixiv has two buckets in this UI. The ranking/search endpoint is also
+      // asked for the matching bucket, but keep a hard client-side guard so a
+      // mixed upstream response cannot leak works into the wrong view.
+      posts = posts.filter(post => post.rating === 'e');
+    } else {
+      posts = posts.filter(post => post.rating !== 'e');
     }
     if (mode === 'viewed') posts = posts.filter(favoriteMatches);
     posts = posts.filter(post => post.preview_file_url || post.large_file_url || post.file_url);
     if (mode === 'latest') posts.sort((a, b) => b.id - a.id);
-    if (run !== generation) return;
+    if (run !== generation || mode !== requestedMode || station !== requestedStation || favoriteFolder !== requestedFolder) return;
     if (!posts.length) {
       ended = true;
       statusEl.textContent = receivedCount ? `接口返回 ${receivedCount} 张，但没有可显示的图片` : (station === 'pflow' && !manualSearchTags ? 'Pixiv 榜单已到底' : '暂时没有更多图片');
@@ -603,6 +750,7 @@ async function load(reset = false) {
       statusEl.textContent = '继续下滑加载';
     }
   } catch (error) {
+    if (run !== generation || mode !== requestedMode || station !== requestedStation || favoriteFolder !== requestedFolder) return;
     if (error.name === 'AbortError') {
       if (timedOut && run === generation) {
         loadFailed = true;
@@ -623,19 +771,23 @@ async function load(reset = false) {
       loading = false;
       lastRequestFinishedAt = Date.now();
       sentinel.classList.remove('loading');
-      if (!loadFailed) queueNextLoad();
+       if (!loadFailed && mode === requestedMode && station === requestedStation && favoriteFolder === requestedFolder) queueNextLoad();
     }
   }
-}function render(posts) {
-  gallery.classList.toggle('reverse-gallery', mode === 'favorites' && favoriteFolder !== 'original');
+}function render(posts, options = {}) {
+  const renderFolder = options.favoriteFolder || favoriteFolder;
+  gallery.classList.toggle('reverse-gallery', mode === 'favorites' && renderFolder !== 'original');
   for (const post of posts) {
-    if (mode === 'favorites' && favoriteFolder !== 'original') { renderReverseCard(post); continue; }
+    if (mode === 'favorites' && renderFolder !== 'original') {
+      renderReverseCard(post, {kind: 'favorite', folder: renderFolder});
+      continue;
+    }
+    const isFavoriteGallery = mode === 'favorites';
+    const isOriginalFavorite = isFavoriteGallery && renderFolder === 'original';
     const card = document.createElement('article');
     card.className = 'card';
-    if (mode === 'favorites' && favoriteFolder === 'original') {
-      if (post.cacheStatus === 'error') card.classList.add('cache-failed');
-      else if (post.cacheStatus !== 'ready') card.classList.add('cache-waiting');
-    }
+    if (isOriginalFavorite) card.dataset.favoriteId = String(post.id);
+
     const isPixiv = post.source === 'pixiv' || String(post.id).startsWith('px_');
     const img = document.createElement('img');
     // Reserve the post's aspect ratio before its thumbnail arrives. Otherwise
@@ -648,13 +800,52 @@ async function load(reset = false) {
     img.height = Math.round(1000 * ratio);
     img.loading = 'lazy';
     img.decoding = 'async';
-    img.src = mode === 'favorites' && post.cacheStatus === 'ready' ? `/api/reverse/image/${post.id}` : imageSrc(post.preview_file_url || post.large_file_url || post.file_url);
     img.alt = post.title || (isPixiv ? `Pixiv #${post.pixiv_id || post.id}` : `Danbooru #${post.id}`);
-    img.addEventListener('load', () => { img.classList.add('loaded'); queueNextLoad(); });
+
+    const remoteSources = [...new Set([
+      post.preview_file_url,
+      post.large_file_url,
+      post.file_url
+    ].filter(Boolean).map(imageSrc).filter(Boolean))];
+    let remoteIndex = 0;
+    let selectedSource = '';
+    const setImageSource = () => {
+      const useCache = isOriginalFavorite && post.cacheStatus === 'ready';
+      const nextSource = useCache
+        ? favoriteCacheSrc(post.id, post.cacheFile || post.updatedAt || '')
+        : (remoteSources[0] || '');
+      if (nextSource === selectedSource) return;
+      selectedSource = nextSource;
+      remoteIndex = 0;
+      img.dataset.fallback = '';
+      img.dataset.cacheReady = useCache ? '1' : '';
+      img.dataset.cacheAttempt = useCache ? '1' : '0';
+      if (!nextSource) { img.removeAttribute('src'); return; }
+      const resolved = new URL(nextSource, document.baseURI).href;
+      if (img.src !== resolved) img.src = nextSource;
+    };
+    setImageSource();    img.addEventListener('load', () => { img.classList.add('loaded'); queueNextLoad(); });
     img.addEventListener('error', () => {
-      if (img.dataset.fallback !== '1' && post.large_file_url) {
+      // If the local file disappeared unexpectedly, keep the card usable from
+      // the remote source while the server reconciles the cache state.
+      if (img.dataset.cacheReady === '1') {
+        img.dataset.cacheReady = '';
+        remoteIndex = 0;
+        if (remoteSources.length) {
+          img.dataset.fallback = '1';
+          // Remember that the displayed source is now the remote fallback.
+          // Otherwise a later shared-state refresh can think the cache URL is
+          // still selected and never try the repaired local file again.
+          selectedSource = remoteSources[0];
+          img.src = remoteSources[0];
+        }
+        return;
+      }
+      if (remoteIndex + 1 < remoteSources.length) {
+        remoteIndex += 1;
         img.dataset.fallback = '1';
-        img.src = imageSrc(post.large_file_url);
+        selectedSource = remoteSources[remoteIndex];
+        img.src = remoteSources[remoteIndex];
       }
     });
 
@@ -674,37 +865,41 @@ async function load(reset = false) {
       toggleFavorite(post);
     };
 
-    if (mode === 'favorites') {
+    let cacheFailure = null;
+    let retry = null;
+    if (isFavoriteGallery) {
       // 1. Top-left: Source badge [D] or [P]
       const sourceBadge = document.createElement('span');
       sourceBadge.className = `source-badge ${isPixiv ? 'source-pixiv' : 'source-danbooru'}`;
       sourceBadge.textContent = isPixiv ? 'P' : 'D';
       sourceBadge.title = isPixiv ? '来源：Pixiv' : '来源：Danbooru';
-      card.append(sourceBadge);
+      card.append(sourceBadge, badge);
 
-      // 2. Top-right: Rating dot badge
-      card.append(badge);
+      cacheFailure = document.createElement('span');
+      cacheFailure.className = 'cache-failure-label';
+      cacheFailure.textContent = '失败';
+      cacheFailure.hidden = post.cacheStatus !== 'error';
+      cacheFailure.title = post.cacheError || '高清缓存失败';
+      card.append(cacheFailure);
 
-      if (post.cacheStatus === 'error') {
-        const failure = document.createElement('span'); failure.className = 'cache-failure-label';
-        failure.textContent = '失败'; failure.title = post.cacheError || '高清缓存失败';
-        card.append(failure);
-      }
-      if (post.cacheStatus !== 'ready') {
-        const retry = document.createElement('button');
-        retry.type = 'button'; retry.className = 'cache-retry-button';
-        retry.textContent = post.cacheStatus === 'loading' ? '下载中…' : '重新下载';
-        retry.title = '重新下载本地高清图';
-        retry.disabled = post.cacheStatus === 'loading';
-        retry.onclick = async event => {
-          event.stopPropagation(); retry.disabled = true;
-          try { await patchFavorite(post.id, { retryCache: true }); refreshFavoriteGallery(true); }
-          catch (error) { retry.disabled = false; toast(`重新下载失败：${error.message}`); }
-        };
-        card.append(retry);
-      }
+      retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'cache-retry-button';
+      retry.textContent = post.cacheStatus === 'loading' ? '下载中…' : '重新下载';
+      retry.title = '重新下载本地高清图';
+      retry.disabled = post.cacheStatus === 'loading';
+      retry.hidden = post.cacheStatus === 'ready';
+      retry.onclick = async event => {
+        event.stopPropagation(); retry.disabled = true;
+        try {
+          const updated = await patchFavorite(post.id, { retryCache: true });
+          syncRenderedFavoriteCards([updated]);
+        }
+        catch (error) { retry.disabled = false; toast(`重新下载失败：${error.message}`); }
+      };
+      card.append(retry);
 
-      // 3. Bottom-right toolbar: [ AI ] -> [ 释放至已完成 ] -> [ ♥ 收藏 ]
+      // Bottom-right toolbar: [ AI ] -> [ 释放至已完成 ] -> [ ♥ 收藏 ]
       const actions = document.createElement('div');
       actions.className = 'card-actions-bar';
 
@@ -722,18 +917,33 @@ async function load(reset = false) {
       completedButton.title = done ? '移回原始收藏' : '释放至已完成';
       completedButton.setAttribute('aria-label', completedButton.title);
       completedButton.onclick = event => { event.stopPropagation(); toggleCompleted(post); };
-      actions.append(completedButton);
-
-      actions.append(favoriteButton);
+      actions.append(completedButton, favoriteButton);
       card.append(img, actions);
     } else {
       // Online gallery: Top-right rating dot, bottom-right ONLY favorite button
       card.append(img, badge, favoriteButton);
     }
 
+    card._updateFavoriteState = next => {
+      if (!isOriginalFavorite) return;
+      Object.assign(post, next || {});
+      const cacheStatus = post.cacheStatus || 'idle';
+      card.classList.toggle('cache-failed', cacheStatus === 'error');
+      card.classList.toggle('cache-waiting', cacheStatus !== 'ready');
+      if (cacheFailure) {
+        cacheFailure.hidden = cacheStatus !== 'error';
+        cacheFailure.title = post.cacheError || '高清缓存失败';
+      }
+      if (retry) {
+        retry.hidden = cacheStatus === 'ready';
+        retry.disabled = cacheStatus === 'loading';
+        retry.textContent = cacheStatus === 'loading' ? '下载中…' : '重新下载';
+      }
+      setImageSource();
+    };
+    card._updateFavoriteState(post);
     card.oncontextmenu = event => showMenu(event, post);
-    card.addEventListener('click', () => openLightbox(post, card,
-      mode === 'favorites' && post.cacheStatus === 'ready' ? (img.currentSrc || img.src) : ''));
+    card.addEventListener('click', () => openLightbox(post, card, isOriginalFavorite ? (img.currentSrc || img.src) : ''));
     appendRenderedCard(card, ratio + .03);
   }
 }
@@ -742,167 +952,385 @@ function appendRenderedCard(card, weight = 1) {
   const index = state.heights.indexOf(Math.min(...state.heights));
   state.columns[index].append(card); state.heights[index] += weight;
 }
-function renderReverseCard(post) {
-  const pending = favoriteFolder === 'pending';
-  const isWordedOrCompleted = favoriteFolder === 'worded' || favoriteFolder === 'completed';
-  const isLandscape = Number(post.image_width || 0) > Number(post.image_height || 0);
-  const card = document.createElement('article');
-  card.className = `reverse-card ${isLandscape ? 'landscape' : 'portrait'} ${pending && post.cacheStatus !== 'ready' ? 'uncached' : ''}`;
-  card.dataset.reverseId = post.id;
-  const image = document.createElement('img');
-  image.loading = 'lazy'; image.alt = `Danbooru #${post.id}`;
-  image.src = post.cacheStatus === 'ready' ? `/api/reverse/image/${post.id}` : imageSrc(post.preview_file_url || post.large_file_url);
-  image.onerror = () => {
-    if (post.cacheStatus === 'ready' && image.dataset.fallback !== '1') {
-      image.dataset.fallback = '1'; card.classList.add('uncached'); image.src = imageSrc(post.preview_file_url);
+function directButtonLabel(item) {
+  if (item.directStatus === 'queued' || item.reverseStatus === 'direct-queued') return '重新唤起';
+  if (item.directStatus === 'processing' || item.reverseStatus === 'processing') return '处理中';
+  if (item.directStatus === 'failed') return '失败重试';
+  return 'AI直推';
+}
+function updatePendingControls(item, controls) {
+  if (!controls) return;
+  const failed = item.reverseStatus === 'failed' || item.cacheStatus === 'error' || item.directStatus === 'failed';
+  const done = Boolean(item.prompt || item.positive) && !failed && item.autoEnabled === false;
+  const cacheReady = controls.kind === 'worded'
+    ? Boolean(item.imageExt)
+    : item.cacheStatus === 'ready';
+  controls.card?.classList.toggle('uncached', !cacheReady);
+  if (controls.image && cacheReady && !controls.image.dataset.cacheReady) {
+    controls.image.dataset.cacheReady = '1';
+    controls.image.dataset.fallback = '';
+    controls.image.src = controls.kind === 'worded'
+      ? `/api/worded/images/${encodeURIComponent(item.id)}?v=${encodeURIComponent(item.imageExt || 'cached')}`
+      : `/api/reverse/image/${encodeURIComponent(item.id)}`;
+  }
+  if (controls.lamp) controls.lamp.className = `reverse-lamp ${failed ? 'red' : done ? 'green' : ''}`;
+  if (controls.label) controls.label.textContent = failed ? '错误' : done ? '完成' : item.reverseStatus === 'processing' || item.directStatus === 'processing' ? '处理中' : '等待';
+  if (controls.status) {
+    controls.status.classList.toggle('retryable', failed);
+    const dshDispatch = item.dshDispatch;
+    controls.status.title = dshDispatch?.status === 'failed' ? `DSH 唤起失败：${dshDispatch.error || '点击 AI直推重试'}` :
+      item.cacheStatus === 'error' ? `缓存错误：${item.cacheError || '点击重试'}` : item.reverseStatus === 'failed' || item.directStatus === 'failed' ? `反推错误：${item.reverseError || '点击重试'}` : !cacheReady ? '等待高清图缓存' : item.reverseStatus === 'processing' ? '正在反推' : item.directStatus === 'queued' ? '已入队，等待 DSH Agent 领取；点击按钮可重新唤起' : '等待反推';
+  }
+  if (controls.queueButton) {
+    const order = displayQueueOrder(item.queueOrder) ?? displayQueueOrder(controls.displayQueueOrder);
+    controls.queueButton.textContent = item.autoEnabled !== false ? String(order || '·') : '+';
+    controls.queueButton.classList.toggle('active', item.autoEnabled !== false);
+    controls.queueButton.setAttribute('aria-pressed', String(item.autoEnabled !== false));
+  }
+  if (controls.directButton) {
+    controls.directButton.textContent = directButtonLabel(item);
+    const processing = item.directStatus === 'processing' || item.reverseStatus === 'processing';
+    controls.directButton.disabled = processing;
+    controls.directButton.title = processing ? 'DSH Agent 正在处理这张图' : (item.directStatus === 'queued' || item.reverseStatus === 'direct-queued') ? '任务已入队，点击重新唤起已连接的 DSH 窗口' : '调用已连接的 DSH MCP Agent 直接反推这张图';
+  }
+}
+async function runDirectReverse(item, controls) {
+  if (controls.directButton?.disabled) return;
+  const button = controls.directButton;
+  button.disabled = true; button.textContent = '提交中';
+  try {
+    const response = await fetch(`/api/reverse/${encodeURIComponent(item.id)}/direct`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({})
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw Error(result.error || `HTTP ${response.status}`);
+    const request = result.request;
+    if (result.item) Object.assign(item, result.item);
+    if (!request?.id) throw Error('服务未返回直推任务编号');
+    // The server also dispatches automatically. Calling the idempotent endpoint
+    // here makes an already queued card recoverable after a page refresh or a
+    // temporary DSH Bridge failure, without creating a second queue entry.
+    if (request.status === 'queued') {
+      const wake = await fetch(`/api/reverse/direct/${encodeURIComponent(request.id)}/dispatch`, { method: 'POST' });
+      const wakeResult = await wake.json().catch(() => ({}));
+      if (wakeResult.request) Object.assign(request, wakeResult.request);
+      if (wakeResult.item) Object.assign(item, wakeResult.item);
+      if (!wake.ok && wakeResult.error) toast(`DSH 唤起失败：${wakeResult.error}；任务仍保留在 MCP 队列`);
     }
-  };
-  image.onclick = () => openLightbox(post, card, post.cacheStatus === 'ready' ? `/api/reverse/image/${post.id}` : image.src);
-  const picture = document.createElement('div'); picture.className = 'reverse-picture'; picture.append(image);
-  const width = Math.max(1, Number(post.image_width) || 1);
-  const height = Math.max(1, Number(post.image_height) || 1);
-  const imageShare = pending ? (width > height ? 62 : 55) : 60;
-  if (width > height) picture.style.height = `${Math.min(imageShare, height / width * 100)}%`;
-  else picture.style.width = `${Math.min(imageShare, width / height * 100)}%`;
+    updatePendingControls(item, controls);
+    const deadline = Date.now() + 30 * 60 * 1000;
+    while (Date.now() < deadline) {
+      if (!['queued', 'processing'].includes(request.status)) break;
+      await new Promise(resolve => setTimeout(resolve, 1400));
+      const poll = await fetch(`/api/reverse/direct/${encodeURIComponent(request.id)}`, {cache:'no-store'});
+      const state = await poll.json().catch(() => ({}));
+      if (!poll.ok) throw Error(state.error || `HTTP ${poll.status}`);
+      Object.assign(request, state.request || {});
+      if (state.item) Object.assign(item, state.item);
+      updatePendingControls(item, controls);
+      if (request.status === 'completed') {
+        toast('AI直推完成，已移入有词区');
+        if (controls.kind === 'worded') loadWordedGallery(true);
+        else refreshFavoriteGallery(true);
+        return;
+      }
+      if (request.status === 'failed') {
+        toast(`AI直推失败：${request.error || item.reverseError || '未知错误'}`);
+        updatePendingControls(item, controls);
+        return;
+      }
+      if (request.status === 'cancelled') return;
+    }
+    if (Date.now() >= deadline) toast('AI直推仍在后台处理中，可稍后查看状态');
+  } catch (error) {
+    button.disabled = false; button.textContent = '失败重试';
+    toast(`AI直推失败：${error.message}`);
+  } finally {
+    if (document.body.contains(button)) updatePendingControls(item, controls);
+  }
+}
+function renderReverseCard(item, options = {}) {
+  const kind = options.kind || 'favorite';
+  const isWordedEntry = kind === 'worded';
+  const folder = options.folder || (isWordedEntry ? item.folder || 'worded' : favoriteFolder);
+  const pending = folder === 'pending';
+  const isWordedOrCompleted = folder === 'worded' || folder === 'completed';
+  const prompt = String(isWordedEntry ? (item.positive || '') : (item.prompt || ''));
+  const initialQueueOrder = displayQueueOrder(options.displayQueueOrder) ?? displayQueueOrder(item.queueOrder);
+  const width = Math.max(1, Number(isWordedEntry ? item.width : item.image_width) || 1);
+  const height = Math.max(1, Number(isWordedEntry ? item.height : item.image_height) || 1);
+  const isLandscape = width > height;
+  const cachedImage = isWordedEntry ? Boolean(item.imageExt) : item.cacheStatus === 'ready';
+  const remoteSources = isWordedEntry ? [] : [...new Set([
+    item.preview_file_url, item.large_file_url, item.file_url
+  ].filter(Boolean).map(imageSrc).filter(Boolean))];
+  const imageUrl = isWordedEntry
+    ? wordedImageSrc(item)
+    : cachedImage
+      ? favoriteCacheSrc(item.id, item.cacheFile || item.updatedAt || '')
+      : (remoteSources[0] || '');
+  const hasImage = Boolean(imageUrl || remoteSources.length);
+  const card = document.createElement('article');
+  let pendingControls = null;
+  card.className = `reverse-card ${isLandscape ? 'landscape' : 'portrait'} ${pending && !cachedImage ? 'uncached' : ''}${!hasImage ? ' text-only' : ''}`;
+  card.dataset.reverseId = String(item.id);
+  if (isWordedEntry) card.dataset.wordedId = String(item.id);
 
-  const panel = document.createElement('div'); panel.className = 'reverse-panel';
-  const copy = createPromptControl(post.prompt, {
-    kind: 'favorite',
-    id: post.id,
-    preset: post.preset,
-    imageUrl: post.cacheStatus === 'ready' ? `/api/reverse/image/${post.id}` : image.src,
-    onSaved: value => { post.prompt = value; refreshFavoriteGallery(true); }
+  const image = hasImage ? document.createElement('img') : null;
+  let sourceIndex = 0;
+  if (image) {
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    image.alt = item.name || `${isWordedEntry ? '提示词卡片' : 'Danbooru #'}${item.id}`;
+    image.src = imageUrl || remoteSources[0] || '';
+    if (cachedImage) image.dataset.cacheReady = '1';
+    image.onerror = () => {
+      if (!isWordedEntry && sourceIndex + 1 < remoteSources.length) {
+        sourceIndex += 1;
+        image.dataset.fallback = '1';
+        image.src = remoteSources[sourceIndex];
+      }
+    };
+  }
+  const picture = document.createElement('div');
+  picture.className = 'reverse-picture';
+  if (image) {
+    image.onclick = () => openLightbox(
+      {...item, image_width: width, image_height: height},
+      card,
+      image.currentSrc || image.src
+    );
+    picture.append(image);
+    const imageShare = pending ? (isLandscape ? 62 : 55) : 60;
+    if (isLandscape) picture.style.height = `${Math.min(imageShare, height / width * 100)}%`;
+    else picture.style.width = `${Math.min(imageShare, width / height * 100)}%`;
+  } else {
+    const summary = document.createElement('span');
+    summary.className = 'text-summary';
+    summary.textContent = item.summary || prompt.slice(0, 30) || '暂无图片';
+    picture.append(summary);
+    picture.style.height = '60%';
+  }
+
+  const panel = document.createElement('div');
+  panel.className = 'reverse-panel';
+  const patchState = changes => isWordedEntry
+    ? patchWordedState(item.id, changes)
+    : patchFavorite(item.id, changes);
+  const refreshGallery = () => isWordedEntry ? loadWordedGallery(true) : refreshFavoriteGallery(true);
+  const moveTo = target => isWordedEntry
+    ? changeWordedFolder(item, target)
+    : moveFavorite(item, target);
+  const copy = createPromptControl(prompt, {
+    kind: isWordedEntry ? 'worded' : 'favorite',
+    id: item.id,
+    preset: item.preset,
+    imageUrl: image?.currentSrc || image?.src || imageUrl,
+    summary: item.summary,
+    onSaved: value => {
+      if (isWordedEntry) item.positive = value;
+      else item.prompt = value;
+      refreshGallery();
+    }
   });
-  if (!pending && !post.prompt) copy.hidden = true;
+  if (!pending && !prompt) copy.hidden = true;
 
   if (pending) {
     card.classList.add('pending-card');
-    const status = document.createElement('div'); status.className = 'reverse-status';
-    const failed = post.reverseStatus === 'failed' || post.cacheStatus === 'error';
-    const done = Boolean(post.prompt) && !failed && post.autoEnabled === false;
-    const lamp = document.createElement('span'); lamp.className = `reverse-lamp ${failed ? 'red' : done ? 'green' : ''}`;
-    const label = document.createElement('span'); label.textContent = failed ? '错误' : done ? '完成' : '等待';
-    status.title = post.cacheStatus === 'error' ? `缓存错误：${post.cacheError || '点击重试'}` :
-      post.reverseStatus === 'failed' ? `反推错误：${post.reverseError || '点击重试'}` :
-      post.cacheStatus !== 'ready' ? '等待高清图缓存' : post.reverseStatus === 'processing' ? '正在反推（旧提示词已保留）' :
-      post.autoEnabled !== false && post.prompt ? '等待重新反推，旧提示词暂时保留' : label.textContent;
+    const status = document.createElement('div');
+    status.className = 'reverse-status';
+    const failed = item.reverseStatus === 'failed' || item.directStatus === 'failed' || item.cacheStatus === 'error';
+    const done = Boolean(prompt) && !failed && item.autoEnabled === false;
+    const lamp = document.createElement('span');
+    const label = document.createElement('span');
+    const setStatusText = () => {
+      const currentFailed = item.reverseStatus === 'failed' || item.directStatus === 'failed' || item.cacheStatus === 'error';
+      const currentDone = Boolean(isWordedEntry ? item.positive : item.prompt) && !currentFailed && item.autoEnabled === false;
+      lamp.className = `reverse-lamp ${currentFailed ? 'red' : currentDone ? 'green' : ''}`;
+      label.textContent = currentFailed ? '错误' : currentDone ? '完成' : (item.reverseStatus === 'processing' || item.directStatus === 'processing' ? '处理中' : '等待');
+      status.classList.toggle('retryable', currentFailed);
+    };
+    setStatusText();
+    const cacheReady = isWordedEntry ? Boolean(item.imageExt) : item.cacheStatus === 'ready';
+    status.title = item.cacheStatus === 'error' ? `缓存错误：${item.cacheError || '点击重试'}` :
+      item.reverseStatus === 'failed' || item.directStatus === 'failed' ? `反推错误：${item.reverseError || '点击重试'}` :
+      !cacheReady ? '等待高清图缓存' : item.reverseStatus === 'processing' ? '正在反推（旧提示词已保留）' :
+      item.autoEnabled !== false && prompt ? '等待重新反推，旧提示词暂时保留' : label.textContent;
+    status.append(lamp, label);
     if (failed) {
-      status.classList.add('retryable'); status.setAttribute('role','button'); status.tabIndex = 0;
+      status.setAttribute('role', 'button');
+      status.tabIndex = 0;
       status.setAttribute('aria-label', `${status.title}，点击重试`);
       const retry = async () => {
-        try { await patchFavorite(post.id, post.cacheStatus === 'error' ? {retryCache:true} : {retryReverse:true}); refreshFavoriteGallery(true); }
-        catch(error) { toast(`重试失败：${error.message}`); }
+        try {
+          const changes = !isWordedEntry && item.cacheStatus === 'error' ? {retryCache: true} : {retryReverse: true};
+          const updated = await patchState(changes);
+          Object.assign(item, updated || {});
+          card._updateFavoriteState?.(item);
+          if (changes.retryReverse) refreshGallery();
+        } catch (error) { toast(`重试失败：${error.message}`); }
       };
       status.onclick = retry;
       status.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); retry(); } };
     }
-    status.append(lamp, label);
 
-    const queue = document.createElement('div'); queue.className = 'reverse-queue';
-    const queueLabel = document.createElement('span'); queueLabel.textContent = '队列';
-    const queueButton = document.createElement('button'); queueButton.type = 'button'; queueButton.className = `queue-button ${post.autoEnabled !== false ? 'active' : ''}`;
-    queueButton.textContent = post.autoEnabled !== false ? String(post.queueOrder || '·') : '+';
-    queueButton.setAttribute('aria-pressed', String(post.autoEnabled !== false));
-    queueButton.title = post.autoEnabled !== false ? `队列第 ${post.queueOrder || '?'} 位，点击移出` :
-      post.prompt ? '重新反推：成功后替换旧提示词，失败保留旧提示词' : '点击加入反推队列';
+    const queue = document.createElement('div');
+    queue.className = 'reverse-queue';
+    const queueLabel = document.createElement('span');
+    queueLabel.textContent = '队列';
+    const queueButton = document.createElement('button');
+    queueButton.type = 'button';
+    queueButton.className = `queue-button ${item.autoEnabled !== false ? 'active' : ''}`;
+    queueButton.textContent = item.autoEnabled !== false ? String(initialQueueOrder || '·') : '+';
+    queueButton.setAttribute('aria-pressed', String(item.autoEnabled !== false));
+    queueButton.title = item.autoEnabled !== false ? `队列第 ${initialQueueOrder || '?'} 位，点击移出` :
+      prompt ? '重新反推：成功后替换旧提示词，失败保留旧提示词' : '点击加入反推队列';
     queueButton.setAttribute('aria-label', queueButton.title);
-    queueButton.onclick = async () => {
+    queueButton.onclick = async event => {
+      event.stopPropagation();
       queueButton.disabled = true;
-      try { await patchFavorite(post.id, {autoEnabled:post.autoEnabled === false}); refreshFavoriteGallery(true); }
-      catch(error) { queueButton.disabled = false; toast(`更新队列失败：${error.message}`); }
+      try {
+        const updated = await patchState({autoEnabled: item.autoEnabled === false});
+        Object.assign(item, updated || {});
+        refreshGallery();
+      } catch (error) { queueButton.disabled = false; toast(`更新队列失败：${error.message}`); }
     };
     queue.append(queueLabel, queueButton);
 
-    const picker = document.createElement('select'); picker.className = 'preset-picker'; picker.title = '扩写预设';
+    const picker = document.createElement('select');
+    picker.className = 'preset-picker';
+    picker.title = '扩写预设';
     picker.setAttribute('aria-label', '扩写预设');
-    for (const preset of expansionNames()) {
-      const option = document.createElement('option'); option.value = preset; option.textContent = preset;
-      picker.append(option);
-    }
-    if (post.preset && !expansionNames().includes(post.preset)) picker.add(new Option(`${post.preset}（已移除）`, post.preset));
-    picker.value = post.preset || presetConfig.defaultExpansion;
+    for (const preset of expansionNames()) picker.append(new Option(`扩写：${preset}`, preset));
+    if (item.preset && !expansionNames().includes(item.preset)) picker.add(new Option(`${item.preset}（已移除）`, item.preset));
+    picker.value = item.preset || presetConfig.defaultExpansion;
     picker.onchange = async () => {
-      try { await patchFavorite(post.id, {preset: picker.value}); }
-      catch(error) { picker.value = post.preset || presetConfig.defaultExpansion; toast(`扩写预设保存失败：${error.message}`); }
+      const previous = item.preset;
+      try {
+        const updated = await patchState({preset: picker.value});
+        Object.assign(item, updated || {});
+      } catch (error) { picker.value = previous || presetConfig.defaultExpansion; toast(`扩写预设保存失败：${error.message}`); }
     };
-    const actions = document.createElement('div'); actions.className = 'reverse-actions';
-    actions.append(status, queue, picker);
 
-    const instruction = document.createElement('input'); instruction.className = 'reverse-instruction';
-    instruction.type = 'text'; instruction.maxLength = 4000; instruction.placeholder = '额外要求（与预设一起交给 AI）';
-    instruction.setAttribute('aria-label', '额外反推要求'); instruction.value = post.customInstruction || '';
+    const directButton = document.createElement('button');
+    directButton.type = 'button';
+    directButton.className = 'direct-reverse-button';
+    directButton.textContent = directButtonLabel(item);
+    directButton.title = '调用已连接的 MCP Agent 直接反推这张图';
+    directButton.onclick = event => { event.stopPropagation(); runDirectReverse(item, pendingControls); };
+
+    const actions = document.createElement('div');
+    actions.className = 'reverse-actions';
+    actions.append(status, queue, picker, directButton);
+    const instruction = document.createElement('input');
+    instruction.className = 'reverse-instruction';
+    instruction.type = 'text';
+    instruction.maxLength = 4000;
+    instruction.placeholder = '额外要求（与预设一起交给 AI）';
+    instruction.setAttribute('aria-label', '额外反推要求');
+    instruction.value = item.customInstruction || '';
     instruction.onchange = async () => {
-      try { await patchFavorite(post.id, {customInstruction: instruction.value}); toast('额外要求已保存'); }
-      catch(error) { toast('保存失败：' + error.message); }
+      try { const updated = await patchState({customInstruction: instruction.value}); Object.assign(item, updated || {}); toast('额外要求已保存'); }
+      catch (error) { toast('保存失败：' + error.message); }
     };
-
+    pendingControls = {kind, card, image, status, lamp, label, queueButton, directButton, displayQueueOrder: initialQueueOrder};
     panel.append(copy, actions, instruction);
   } else {
     panel.append(copy);
-
     if (isWordedOrCompleted) {
       const panelActions = document.createElement('div');
       panelActions.className = `panel-actions-bar ${isLandscape ? 'horizontal' : 'vertical'}`;
-
       const aiButton = document.createElement('button');
-      aiButton.type = 'button'; aiButton.className = 'ai-button'; aiButton.textContent = 'AI';
+      aiButton.type = 'button';
+      aiButton.className = 'ai-button';
+      aiButton.textContent = 'AI';
       aiButton.title = '移回待反推重新反推';
-      aiButton.onclick = event => { event.stopPropagation(); moveFavorite(post, 'pending'); };
-
+      aiButton.onclick = event => { event.stopPropagation(); moveTo('pending'); };
       const completedButton = document.createElement('button');
       completedButton.type = 'button';
-      completedButton.className = `completed-button ${favoriteFolder === 'completed' ? 'active' : ''}`;
+      completedButton.className = `completed-button ${folder === 'completed' ? 'active' : ''}`;
       completedButton.innerHTML = RELEASE_SVG;
-      completedButton.title = favoriteFolder === 'completed' ? '移回有词区' : '释放至已完成';
-      completedButton.onclick = event => {
-        event.stopPropagation();
-        moveFavorite(post, favoriteFolder === 'completed' ? 'worded' : 'completed');
-      };
-
-      const favoriteButton = document.createElement('button');
-      favoriteButton.type = 'button'; favoriteButton.className = 'favorite-button active';
-      favoriteButton.dataset.favoriteId = post.id; favoriteButton.innerHTML = HEART_SVG;
-      favoriteButton.title = '取消本地收藏';
-      favoriteButton.onclick = event => { event.stopPropagation(); toggleFavorite(post); };
-
-      panelActions.append(aiButton, completedButton, favoriteButton);
+      completedButton.title = folder === 'completed' ? '移回有词区' : '释放至已完成';
+      completedButton.onclick = event => { event.stopPropagation(); moveTo(folder === 'completed' ? 'worded' : 'completed'); };
+      panelActions.append(aiButton, completedButton);
+      if (!isWordedEntry) {
+        const favoriteButton = document.createElement('button');
+        favoriteButton.type = 'button';
+        favoriteButton.className = 'favorite-button active';
+        favoriteButton.dataset.favoriteId = item.id;
+        favoriteButton.innerHTML = HEART_SVG;
+        favoriteButton.title = '取消本地收藏';
+        favoriteButton.onclick = event => { event.stopPropagation(); toggleFavorite(item); };
+        panelActions.append(favoriteButton);
+      }
       panel.append(panelActions);
     }
   }
 
   card.append(picture, panel);
+  card._updateFavoriteState = next => { Object.assign(item, next || {}); updatePendingControls(item, pendingControls); };
+  if (pendingControls) updatePendingControls(item, pendingControls);
 
-  const isPixiv = post.source === 'pixiv' || String(post.id).startsWith('px_');
-  const sourceBadge = document.createElement('span');
-  sourceBadge.className = `source-badge ${isPixiv ? 'source-pixiv' : 'source-danbooru'}`;
-  sourceBadge.textContent = isPixiv ? 'P' : 'D';
-  sourceBadge.title = isPixiv ? '来源：Pixiv' : '来源：Danbooru';
-
-  const badge = document.createElement('span');
-  badge.className = `badge rating-${post.rating || 'g'}`;
-  badge.title = `${ratingNames[post.rating] || post.rating || '全年龄'}`;
-
-  picture.append(sourceBadge, badge);
-
-  if (pending) {
-    // Pending is a temporary queue: return the card to Original Favorites without deleting it.
-    const backBtn = document.createElement('button');
-    backBtn.type = 'button'; backBtn.className = 'pending-back-button';
-    backBtn.innerHTML = BACK_SVG; backBtn.title = '返回原始收藏';
-    backBtn.setAttribute('aria-label', backBtn.title);
-    backBtn.onclick = event => { event.stopPropagation(); moveFavorite(post, 'original'); };
-    const favBtn = document.createElement('button');
-    favBtn.type = 'button'; favBtn.className = 'favorite-button active';
-    favBtn.dataset.favoriteId = post.id; favBtn.innerHTML = HEART_SVG;
-    favBtn.title = '取消本地收藏';
-    favBtn.onclick = event => { event.stopPropagation(); toggleFavorite(post); };
-    const pendingActions = document.createElement('div');
-    pendingActions.className = 'pending-picture-actions';
-    pendingActions.append(backBtn, favBtn);
-    picture.append(pendingActions);
+  const showSource = !isWordedEntry || ['pixiv', 'danbooru', 'p', 'd'].includes(String(item.source || '').toLowerCase());
+  if (showSource) {
+    const isPixiv = item.source === 'pixiv' || String(item.id).startsWith('px_');
+    const sourceBadge = document.createElement('span');
+    sourceBadge.className = `source-badge ${isPixiv ? 'source-pixiv' : 'source-danbooru'}`;
+    sourceBadge.textContent = isPixiv ? 'P' : 'D';
+    sourceBadge.title = isPixiv ? '来源：Pixiv' : '来源：Danbooru';
+    picture.append(sourceBadge);
+  }
+  if (!isWordedEntry || item.rating) {
+    const badge = document.createElement('span');
+    badge.className = `badge rating-${item.rating || 'g'}`;
+    badge.title = `${ratingNames[item.rating] || item.rating || '全年龄'}`;
+    picture.append(badge);
   }
 
-  card.oncontextmenu = event => showMenu(event, post);
+  if (pending) {
+    const pictureActions = document.createElement('div');
+    pictureActions.className = `pending-picture-actions${isWordedEntry ? ' worded-picture-actions' : ''}`;
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'pending-back-button';
+    backBtn.innerHTML = BACK_SVG;
+    backBtn.title = isWordedEntry ? '返回有词区' : '返回原始收藏';
+    backBtn.setAttribute('aria-label', backBtn.title);
+    backBtn.onclick = event => { event.stopPropagation(); moveTo(isWordedEntry ? 'worded' : 'original'); };
+    pictureActions.append(backBtn);
+    if (isWordedEntry) {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'worded-picture-delete';
+      remove.textContent = '×';
+      remove.title = '删除这张提示词卡片';
+      remove.setAttribute('aria-label', remove.title);
+      remove.onclick = async event => {
+        event.stopPropagation();
+        if (!confirm('确定删除这张提示词卡片及本地图片？')) return;
+        try {
+          const response = await fetch(`/api/worded/entries/${encodeURIComponent(item.id)}`, {method: 'DELETE'});
+          if (!response.ok) throw Error(`HTTP ${response.status}`);
+          loadWordedGallery(true);
+          toast('已删除卡片');
+        } catch (error) { toast(`删除失败：${error.message}`); }
+      };
+      pictureActions.append(remove);
+    } else {
+      const favoriteButton = document.createElement('button');
+      favoriteButton.type = 'button';
+      favoriteButton.className = 'favorite-button active';
+      favoriteButton.dataset.favoriteId = item.id;
+      favoriteButton.innerHTML = HEART_SVG;
+      favoriteButton.title = '取消本地收藏';
+      favoriteButton.onclick = event => { event.stopPropagation(); toggleFavorite(item); };
+      pictureActions.append(favoriteButton);
+    }
+    picture.append(pictureActions);
+  }
+
+  card.oncontextmenu = event => isWordedEntry ? showManualMenu(event, item) : showMenu(event, item);
   appendRenderedCard(card);
 }
 function promptCharacterCount(value) {
@@ -1307,13 +1735,10 @@ function closeLightbox() {
 lightbox.addEventListener('click', event => {
   if (event.target === lightbox || event.target.id === 'lightboxClose') closeLightbox();
 });
-let resizeGalleryTimer = 0;
 window.addEventListener('resize', () => {
+  // Tablet browser chrome expands/collapses the viewport and fires resize many
+  // times. Reposition the open preview only; never rebuild the gallery here.
   if (!lightbox.classList.contains('hidden') && previewPost) placeLightbox(previewCard, previewPost);
-  if (mode === 'metadata' || (mode === 'favorites' && ['pending','worded'].includes(favoriteFolder))) {
-    clearTimeout(resizeGalleryTimer);
-    resizeGalleryTimer = setTimeout(() => mode === 'metadata' ? loadMetadataGallery() : refreshFavoriteGallery(true), 150);
-  }
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') closeLightbox();
@@ -1487,11 +1912,17 @@ function viewKey(modeName = mode) {
     normalizeSearchTags(manualSearchTags),
     [...selectedPopularTags].sort().join(','),
     columnCount(),
+    isPixivMode(modeName) ? pixivDate(modeName) : '',
     modeName === 'favorites' ? favoriteFolder : ''
   ].join('|');
 }
 function saveCurrentView() {
-  if (!currentPosts.length) return;
+  // The worded/pending/completed galleries contain a second persisted source
+  // (the manual worded index). Their currentPosts array intentionally does
+  // not represent every rendered card, so restoring it could reinsert an old
+  // generic card shape. Always reload these folders through the unified
+  // reverse-card renderer instead.
+  if (!currentPosts.length || (mode === 'favorites' && ['worded', 'pending', 'completed'].includes(favoriteFolder))) return;
   viewCache.set(viewKey(), {
     posts: currentPosts.slice(), cursor, pageNo, ended, loadFailed,
     status: statusEl.textContent, scrollY: window.scrollY
@@ -1499,6 +1930,7 @@ function saveCurrentView() {
   while (viewCache.size > 30) viewCache.delete(viewCache.keys().next().value);
 }
 function restoreView(modeName) {
+  if (modeName === 'favorites' && ['worded', 'pending', 'completed'].includes(favoriteFolder)) return false;
   const cached = viewCache.get(viewKey(modeName));
   if (!cached) return false;
   clearTimeout(nextLoadTimer);
@@ -1524,39 +1956,130 @@ function restoreView(modeName) {
   return true;
 }
 function selectMode(nextMode, button) {
-  if (nextMode === mode) return;
+  if (nextMode === mode) {
+    // Clicking the already-selected local collection is an explicit refresh.
+    // This recovers cards whose shared cache state changed while the user was
+    // browsing without forcing a detour through the D/P station buttons.
+    if (nextMode === 'favorites') {
+      if (['worded', 'pending', 'completed'].includes(favoriteFolder)) loadWordedGallery(true);
+      else refreshFavoriteGallery(true);
+    } else if (nextMode === 'metadata') {
+      loadMetadataGallery();
+    } else if (isPixivMode(nextMode)) {
+      viewCache.delete(viewKey());
+      load(true);
+    }
+    updatePixivControls();
+    return;
+  }
   saveCurrentView();
+  invalidateGalleryRequests();
   mode = nextMode;
   activateButton(button || document.querySelector(`[data-mode="${nextMode}"]`));
   document.querySelector('#favoriteFolders')?.classList.toggle('hidden', nextMode !== 'favorites');
+  updatePixivModeButtons();
+  updatePixivControls();
   schedulePreferenceSave();
   if (nextMode === 'metadata' || (nextMode === 'favorites' && favoriteFolder === 'worded')) load(true);
   else if (!restoreView(nextMode)) load(true);
 }
 document.querySelectorAll('.mode[data-mode]').forEach(button => button.onclick = () => selectMode(button.dataset.mode, button));
-document.querySelectorAll('.rating-menu input').forEach(input => input.onchange = () => {
-  if (!ratingChecks().length) { input.checked = true; toast('至少保留一个分级'); }
-  updateRatingLabel();
-  schedulePreferenceSave();
-  load(true);
-});
-document.querySelector('#allRatings').onclick = () => {
-  document.querySelectorAll('.rating-menu input').forEach(input => input.checked = true);
-  updateRatingLabel(); schedulePreferenceSave(); load(true);
-};
-function updateRatingLabel() {
-  const count = ratingChecks().length;
-  document.querySelector('#ratingButton').textContent = (count === 4 ? '分级' : `分级 ${count}/4`) + '⌄';
+function bindRatingMenu() {
+  const menu = document.querySelector('.rating-menu');
+  if (!menu) return;
+  menu.querySelectorAll('input').forEach(input => input.onchange = () => {
+    if (station === 'pflow') {
+      pixivRating = input.value === 'r18' ? 'r18' : 'safe';
+      localStorage.setItem(PIXIV_RATING_KEY, pixivRating);
+      const nextMode = pixivModeForKind(pixivKind(mode), pixivRating);
+      updatePixivModeButtons();
+      updateRatingMenuForStation();
+      updatePixivControls();
+      schedulePreferenceSave();
+      selectMode(nextMode, document.querySelector(`[data-mode="${nextMode}"]`));
+      return;
+    }
+    const selected = ratingChecks();
+    if (!selected.length) {
+      input.checked = true;
+      toast('至少保留一个分级');
+    }
+    dflowRatings = new Set(ratingChecks().filter(value => ['g', 's', 'q', 'e'].includes(value)));
+    updateRatingLabel();
+    schedulePreferenceSave();
+    load(true);
+  });
+  const all = menu.querySelector('#allRatings');
+  if (all) all.onclick = () => {
+    dflowRatings = new Set(['g', 's', 'q', 'e']);
+    menu.querySelectorAll('input').forEach(input => { input.checked = true; });
+    updateRatingLabel();
+    schedulePreferenceSave();
+    load(true);
+  };
 }
-document.querySelector('#ratingButton').onclick = () => document.querySelector('#ratingPicker').classList.toggle('open');
+function updateRatingMenuForStation() {
+  const menu = document.querySelector('.rating-menu');
+  if (!menu) return;
+  const previous = [...menu.querySelectorAll('input:checked')].map(input => input.value);
+  if (station === 'dflow' && previous.every(value => ['g', 's', 'q', 'e'].includes(value)) && previous.length) {
+    dflowRatings = new Set(previous);
+  }
+  if (station === 'pflow') {
+    menu.innerHTML = `
+      <label><input type="radio" name="pixivRating" value="safe" ${pixivRating === 'safe' ? 'checked' : ''}> <i class="rating-dot dot-g"></i>全年龄</label>
+      <label><input type="radio" name="pixivRating" value="r18" ${pixivRating === 'r18' ? 'checked' : ''}> <i class="rating-dot dot-e"></i>R18</label>
+    `;
+  } else {
+    const ratings = dflowRatings.size ? dflowRatings : new Set(['g', 's', 'q', 'e']);
+    menu.innerHTML = `
+      <label><input type="checkbox" value="g" ${ratings.has('g') ? 'checked' : ''}> <i class="rating-dot dot-g"></i>全年龄</label>
+      <label><input type="checkbox" value="s" ${ratings.has('s') ? 'checked' : ''}> <i class="rating-dot dot-s"></i>敏感</label>
+      <label><input type="checkbox" value="q" ${ratings.has('q') ? 'checked' : ''}> <i class="rating-dot dot-q"></i>较敏感</label>
+      <label><input type="checkbox" value="e" ${ratings.has('e') ? 'checked' : ''}> <i class="rating-dot dot-e"></i>成人</label>
+      <button id="allRatings" type="button">全选</button>
+    `;
+  }
+  bindRatingMenu();
+  updateRatingLabel();
+}
+function updateRatingLabel() {
+  const button = document.querySelector('#ratingButton');
+  if (!button) return;
+  const picker = document.querySelector('#ratingPicker');
+  button.setAttribute('aria-expanded', String(Boolean(picker?.classList.contains('open'))));
+  if (station === 'pflow') {
+    const label = pixivRating === 'r18' ? 'R18' : '全年龄';
+    button.textContent = `分级 ${label}⌄`;
+    button.setAttribute('aria-label', `Pflow 年龄分级：${label}，点击切换`);
+    return;
+  }
+  const count = ratingChecks().length;
+  button.textContent = (count === 4 ? '分级' : `分级 ${count}/4`) + '⌄';
+  button.setAttribute('aria-label', `Dflow 图片分级，当前选择 ${count} 类，点击展开`);
+}
+updateRatingMenuForStation();
+document.querySelector('#ratingButton').onclick = () => {
+  const picker = document.querySelector('#ratingPicker');
+  const open = !picker.classList.contains('open');
+  picker.classList.toggle('open', open);
+  document.querySelector('#ratingButton')?.setAttribute('aria-expanded', String(open));
+};
 const columnPicker = document.querySelector('#columnPicker');
 document.querySelector('#columnButton').onclick = () => {
   columnPicker.classList.toggle('open');
   document.querySelector('#columnButton').setAttribute('aria-expanded', columnPicker.classList.contains('open'));
 };
 document.querySelectorAll('#favoriteFolders [data-folder]').forEach(button => button.onclick = () => {
-  if (favoriteFolder === button.dataset.folder) return;
+  if (favoriteFolder === button.dataset.folder) {
+    if (mode === 'favorites') {
+      if (['worded', 'pending', 'completed'].includes(favoriteFolder)) loadWordedGallery(true);
+      else refreshFavoriteGallery(true);
+    }
+    return;
+  }
   if (mode === 'favorites') saveCurrentView();
+  invalidateGalleryRequests();
   favoriteFolder = button.dataset.folder;
   document.querySelectorAll('#favoriteFolders [data-folder]').forEach(item => item.classList.toggle('active', item === button));
   if (mode === 'favorites' && ['worded','pending','completed'].includes(favoriteFolder)) { load(true); return; }
@@ -1570,6 +2093,7 @@ if (retryMissingCache) retryMissingCache.onclick = async event => {
   retryCacheBusy = true;
   retryMissingCache.disabled = true;
   retryMissingCache.textContent = '正在提交补缓存任务…';
+  const revision = ++favoriteStateRevision;
   try {
     const response = await fetch('/api/favorites/retry-cache', {
       method: 'POST',
@@ -1581,7 +2105,7 @@ if (retryMissingCache) retryMissingCache.onclick = async event => {
     try { result = await response.json(); }
     catch { throw Error('服务未返回有效的补缓存结果，请重启 DFlow 服务后重试'); }
     if (!response.ok || result.ok !== true) throw Error(result.error || `HTTP ${response.status}`);
-    if (Array.isArray(result.favorites)) {
+    if (revision === favoriteStateRevision && Array.isArray(result.favorites)) {
       favoriteCache = result.favorites;
       localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoriteCache));
       sharedUpdatedAt = result.updatedAt || sharedUpdatedAt;
@@ -1596,7 +2120,13 @@ if (retryMissingCache) retryMissingCache.onclick = async event => {
     updateFavoriteCount();
   }
 };
-document.querySelector('#searchBtn').onclick = () => { manualSearchTags = normalizeSearchTags(searchInput.value); searchInput.value = manualSearchTags; schedulePreferenceSave(); load(true); };
+document.querySelector('#searchBtn').onclick = () => {
+  manualSearchTags = normalizeSearchTags(searchInput.value);
+  searchInput.value = manualSearchTags;
+  updatePixivControls();
+  schedulePreferenceSave();
+  load(true);
+};
 searchInput.onkeydown = event => { if (event.key === 'Enter') document.querySelector('#searchBtn').click(); };
 document.querySelector('#clearBtn').onclick = () => {
   searchInput.value = '';
@@ -1604,13 +2134,18 @@ document.querySelector('#clearBtn').onclick = () => {
   selectedPopularTags.clear();
   drawTags();
   updateSelectedTagCount();
+  updatePixivControls();
   schedulePreferenceSave();
   load(true);
 };
 document.querySelector('#refresh').onclick = () => { viewCache.delete(viewKey()); load(true); };
 document.addEventListener('click', event => {
   if (!menu.contains(event.target)) menu.classList.add('hidden');
-  if (!event.target.closest('.rating-picker')) document.querySelector('#ratingPicker')?.classList.remove('open');
+  if (!event.target.closest('.rating-picker')) {
+    const picker = document.querySelector('#ratingPicker');
+    picker?.classList.remove('open');
+    document.querySelector('#ratingButton')?.setAttribute('aria-expanded', 'false');
+  }
   if (!event.target.closest('.column-picker')) document.querySelector('#columnPicker')?.classList.remove('open');
 });
 document.querySelector('#tagToggle').onclick = () => document.querySelector('#tagbar').classList.toggle('collapsed');
@@ -1621,6 +2156,69 @@ document.addEventListener('wheel', event => {
   setColumns(event.deltaY > 0 ? current - 1 : current + 1);
 }, { passive: false });
 
+function updatePixivModeButtons() {
+  const labels = pixivRating === 'r18'
+    ? { daily: '今日', weekly: '本周', monthly: '月榜', ai: 'AI生成' }
+    : { daily: '日榜', weekly: '周榜', monthly: '月榜', ai: 'AI榜' };
+  document.querySelectorAll('.nav-pflow [data-pixiv-kind]').forEach(button => {
+    const kind = button.dataset.pixivKind || 'daily';
+    button.dataset.mode = pixivModeForKind(kind, pixivRating);
+    button.textContent = labels[kind] || kind;
+    button.hidden = pixivRating === 'r18' && kind === 'monthly';
+  });
+}
+function updatePixivControls() {
+  const controls = document.querySelector('#pixivControls');
+  const input = document.querySelector('#pixivDate');
+  if (!controls || !input) return;
+  // The date bar belongs to Pixiv board modes, not local folders or search.
+  // Keep this condition explicit so switching from Dflow's local favorites to
+  // Pflow cannot leave the control permanently hidden.
+  const visible = station === 'pflow' && isPixivMode(mode) && !manualSearchTags;
+  controls.hidden = !visible;
+  controls.classList.toggle('hidden', !visible);
+  if (!visible) return;
+  const today = localIsoDate();
+  const value = pixivDate(mode);
+  input.value = value > today ? today : value;
+  input.max = today;
+  const label = document.querySelector('#pixivDateLabel');
+  if (label) {
+    const kind = pixivKind(mode);
+    const ratingLabel = pixivRating === 'r18' ? 'R18' : '全年龄';
+    label.textContent = `${ratingLabel} · ${kind === 'ai' ? 'AI榜日期' : '榜单日期'}`;
+  }
+  const previous = document.querySelector('#pixivPrevDay');
+  const next = document.querySelector('#pixivNextDay');
+  if (previous) previous.disabled = false;
+  if (next) next.disabled = input.value >= today;
+}
+function shiftPixivDate(days) {
+  if (station !== 'pflow' || !isPixivMode(mode)) return;
+  const current = pixivDate(mode);
+  const [year, month, day] = current.split('-').map(Number);
+  const value = new Date(year, month - 1, day);
+  value.setDate(value.getDate() + Number(days || 0));
+  const next = localIsoDate(value);
+  const today = localIsoDate();
+  if (next > today) return;
+  savePixivDate(mode, next);
+  viewCache.delete(viewKey());
+  updatePixivControls();
+  load(true);
+}
+function choosePixivDate(value) {
+  if (station !== 'pflow' || !isPixivMode(mode)) return;
+  const normalized = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || normalized > localIsoDate()) {
+    updatePixivControls();
+    return;
+  }
+  savePixivDate(mode, normalized);
+  viewCache.delete(viewKey());
+  updatePixivControls();
+  load(true);
+}
 function updateStationUI() {
   const switchBtn = document.querySelector('#stationSwitch');
   const label = switchBtn?.querySelector('.station-label');
@@ -1644,20 +2242,42 @@ function updateStationUI() {
     if (searchInput) searchInput.placeholder = '搜索 Danbooru 标签、角色、作品，例如：blue_eyes rating:g';
     if (settingsBtn) settingsBtn.textContent = '登录 Dflow';
   }
+  updatePixivModeButtons();
+  updateRatingMenuForStation();
+  updatePixivControls();
 }
 
 function switchStation(next) {
   const targetStation = next || (station === 'dflow' ? 'pflow' : 'dflow');
   if (targetStation === station && next) return;
+  const previousStation = station;
   station = targetStation;
+  // A Dflow search/tag query is not a Pflow board query. Leaving it in place
+  // made the Pixiv date row disappear because the page still considered itself
+  // a search view after the station switch. Entering Pflow therefore starts on
+  // its selected ranking board; the user can type a new Pixiv search afterward.
+  if (station === 'pflow' && previousStation !== 'pflow') {
+    manualSearchTags = '';
+    if (searchInput) searchInput.value = '';
+    selectedPopularTags.clear();
+    drawTags();
+    updateSelectedTagCount();
+  }
   localStorage.setItem('dflow_station', station);
   updateStationUI();
 
   const dflowModes = new Set(['latest', 'popular-day', 'popular-week', 'popular-month', 'viewed', 'favcount', 'comment', 'upvotes', 'score', 'rank', 'mpixels']);
-  const pflowModes = new Set(['pixiv-daily', 'pixiv-weekly', 'pixiv-monthly', 'pixiv-ai', 'pixiv-r18']);
+  const pflowModes = new Set([...PIXIV_MODES, 'pixiv-r18']);
 
-  if (station === 'pflow' && dflowModes.has(mode)) {
-    selectMode('pixiv-daily');
+  // Favorites / metadata are shared navigation items and are not a Pixiv
+  // board.  When the user switches stations while one of those items is open,
+  // enter Pixiv's default board so the date bar and Pixiv rating selector are
+  // immediately available instead of leaving the page on the local gallery.
+  if (station === 'pflow' && !pflowModes.has(mode)) {
+    const nextMode = mode === 'pixiv-r18'
+      ? 'pixiv-r18-daily'
+      : pixivModeForKind('daily', pixivRating);
+    selectMode(nextMode, document.querySelector(`[data-mode="${nextMode}"]`));
   } else if (station === 'dflow' && pflowModes.has(mode)) {
     selectMode('latest');
   } else {
@@ -1666,6 +2286,16 @@ function switchStation(next) {
 }
 
 document.querySelector('#stationSwitch').onclick = () => switchStation();
+document.querySelector('#pixivPrevDay')?.addEventListener('click', () => shiftPixivDate(-1));
+document.querySelector('#pixivNextDay')?.addEventListener('click', () => shiftPixivDate(1));
+document.querySelector('#pixivToday')?.addEventListener('click', () => {
+  if (station !== 'pflow' || !isPixivMode(mode)) return;
+  savePixivDate(mode, localIsoDate());
+  viewCache.delete(viewKey());
+  updatePixivControls();
+  load(true);
+});
+document.querySelector('#pixivDate')?.addEventListener('change', event => choosePixivDate(event.target.value));
 
 async function loadPresetConfig() {
   try {
@@ -1731,19 +2361,89 @@ document.querySelector('#saveMcpPresets').onclick=async()=>{
 };
 async function refreshMcpSessions(){
   const container=document.querySelector('#mcpSessions');
-  try { const response=await fetch('/api/mcp/sessions',{cache:'no-store'});const result=await response.json();if(!response.ok)throw Error(result.error||`HTTP ${response.status}`);
-    container.replaceChildren();if(!result.length){container.textContent='当前没有连接中的 Agent';return;}
-    for(const session of result){const row=document.createElement('div');row.className='mcp-session';const label=document.createElement('span');label.textContent=`${session.name} ${session.version || ''} · 已连接 ${new Date(session.since).toLocaleTimeString()}`;
-      const disconnect=document.createElement('button');disconnect.type='button';disconnect.className='btn-subtle';disconnect.textContent='断开';disconnect.onclick=async()=>{if(!confirm(`断开 ${session.name} 的当前 MCP 会话？`))return;await fetch(`/api/mcp/sessions/${encodeURIComponent(session.id)}`,{method:'DELETE'});refreshMcpSessions();};row.append(label,disconnect);container.append(row);}
+  try {
+    const response=await fetch('/api/mcp/sessions',{cache:'no-store'});
+    const result=await response.json();
+    if(!response.ok)throw Error(result.error||`HTTP ${response.status}`);
+    const targetResponse=await fetch('/api/mcp/direct-target',{cache:'no-store'});
+    const targetState=await targetResponse.json().catch(()=>({}));
+    const targetId=String(targetState.sessionId || localStorage.getItem(DIRECT_SESSION_KEY) || '');
+    if (targetId) localStorage.setItem(DIRECT_SESSION_KEY,targetId);
+    container.replaceChildren();
+    if(!result.length){
+      container.textContent=targetId ? '当前没有连接中的 Agent（已保留原直推目标）' : '当前没有连接中的 Agent';
+      return;
+    }
+    const liveIds=new Set(result.map(session=>String(session.id)));
+    for(const session of result){
+      const row=document.createElement('div'); row.className='mcp-session';
+      const label=document.createElement('span'); label.className='mcp-session-label';
+      const isTarget=String(session.id)===String(targetId);
+      label.textContent=`${session.name} ${session.version || ''} · 已连接 ${new Date(session.since).toLocaleTimeString()}${isTarget?' · 直推目标':''}`;
+      const actions=document.createElement('span'); actions.className='mcp-session-actions';
+      const target=document.createElement('button'); target.type='button'; target.className='btn-subtle';
+      target.textContent=isTarget?'当前直推目标':'设为直推目标'; target.disabled=isTarget;
+      target.title=isTarget?'平板上的 AI直推会发送到此 Agent':'将平板上的 AI直推固定发送到此 Agent';
+      target.onclick=async()=>{
+        try {
+          const selected=await fetch('/api/mcp/direct-target',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:String(session.id)})});
+          const data=await selected.json().catch(()=>({})); if(!selected.ok) throw Error(data.error||`HTTP ${selected.status}`);
+          localStorage.setItem(DIRECT_SESSION_KEY,String(session.id)); refreshMcpSessions();
+        } catch(error) { toast(`设置直推目标失败：${error.message}`); }
+      };
+      const disconnect=document.createElement('button'); disconnect.type='button'; disconnect.className='btn-subtle'; disconnect.textContent='断开';
+      disconnect.onclick=async()=>{if(!confirm(`断开 ${session.name} 的当前 MCP 会话？`))return;try{await fetch(`/api/mcp/sessions/${encodeURIComponent(session.id)}`,{method:'DELETE'});}finally{refreshMcpSessions();}};
+      actions.append(target,disconnect); row.append(label,actions); container.append(row);
+    }
+    if(targetId&&!liveIds.has(String(targetId))){
+      const note=document.createElement('div'); note.className='mcp-session-offline';
+      note.textContent='已固定的直推目标当前离线；重新连接后会继续使用该目标。'; container.append(note);
+    }
+    const clear=document.createElement('button'); clear.type='button'; clear.className='btn-subtle mcp-clear-target'; clear.textContent='取消固定直推目标'; clear.disabled=!targetId;
+    clear.onclick=async()=>{
+      try { await fetch('/api/mcp/direct-target',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:''})}); } catch {}
+      localStorage.removeItem(DIRECT_SESSION_KEY); refreshMcpSessions();
+    }; container.append(clear);
   }catch(error){container.textContent='读取连接失败：'+error.message;}
 }
+async function refreshDshSessions(){
+  const container=document.querySelector('#dshSessions');
+  const status=document.querySelector('#dshBridgeStatus');
+  if(!container || !status) return;
+  container.textContent='正在读取 DSH 窗口…';
+  try {
+    const response=await fetch('/api/dsh/status',{cache:'no-store'});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok && !result.error) throw Error(`HTTP ${response.status}`);
+    container.replaceChildren();
+    if(!result.available){
+      status.textContent=`DSH Bridge 不可用：${result.error || '请先启动 DSH Desktop'}`;
+      container.textContent='暂时无法读取 DSH 窗口；AI直推任务仍会保留在 MCP 队列。';
+      return;
+    }
+    status.textContent=result.configuredSessionId ? `已连接 · 固定窗口：${result.configuredTitle || result.configuredSessionId}` : '已连接 · 只有一个在线窗口时会自动使用它';
+    const sessions=Array.isArray(result.sessions)?result.sessions:[];
+    if(!sessions.length){container.textContent='没有找到 DSH 聊天窗口';return;}
+    for(const session of sessions){
+      const row=document.createElement('div');row.className='mcp-session';
+      const label=document.createElement('span');label.className='mcp-session-label';
+      label.textContent=`${session.title || '未命名窗口'} · ${session.live ? '在线' : '离线'}${session.readOnly ? ' · 只读' : ''}`;
+      const actions=document.createElement('span');actions.className='mcp-session-actions';
+      const choose=document.createElement('button');choose.type='button';choose.className='btn-subtle';choose.textContent=session.selected?'当前 AI直推窗口':'设为 AI直推窗口';choose.disabled=!session.live || session.readOnly || session.selected;choose.title=session.selected?'网页 AI直推会唤起此 DSH 窗口':'让网页 AI直推唤起此 DSH 窗口';
+      choose.onclick=async()=>{try{const selected=await fetch('/api/dsh/target',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:session.sessionId})});const data=await selected.json().catch(()=>({}));if(!selected.ok)throw Error(data.error||`HTTP ${selected.status}`);refreshDshSessions();}catch(error){toast(`设置 DSH 直推窗口失败：${error.message}`)}};
+      actions.append(choose);row.append(label,actions);container.append(row);
+    }
+    const clear=document.createElement('button');clear.type='button';clear.className='btn-subtle mcp-clear-target';clear.textContent='取消固定 DSH 窗口';clear.disabled=!result.configuredSessionId;clear.onclick=async()=>{try{await fetch('/api/dsh/target',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:''})});refreshDshSessions();}catch(error){toast(`清除 DSH 窗口失败：${error.message}`)}};container.append(clear);
+  }catch(error){status.textContent='DSH 状态读取失败';container.textContent=error.message;}
+}
 document.querySelector('#refreshMcpSessions').onclick=refreshMcpSessions;
+document.querySelector('#refreshDshSessions').onclick=refreshDshSessions;
 document.querySelector('#copyMcpConfig').onclick=async()=>{try{await copyTextToClipboard(document.querySelector('#mcpConnectionConfig').value);toast('已复制 MCP 连接配置');}catch(error){toast('复制失败：'+error.message)}};
 fetch('/api/mcp/setup').then(response=>response.json()).then(config=>{
   if(!config.args)throw Error('只能在运行 DFlow 的电脑上查看连接配置');
   document.querySelector('#mcpConnectionConfig').value=JSON.stringify({mcpServers:{'dflow-local':{command:config.command,args:config.args,env:{DFLOW_PORT:String(config.port)}}}},null,2);
 }).catch(error=>{document.querySelector('#mcpConnectionConfig').value=error.message;});
-setInterval(()=>{if(document.querySelector('#settingsDialog').open&&document.querySelector('#tabMcp').classList.contains('active'))refreshMcpSessions();},6000);
+setInterval(()=>{if(document.querySelector('#settingsDialog').open&&document.querySelector('#tabMcp').classList.contains('active')){refreshMcpSessions();refreshDshSessions();}},6000);
 
 let mcpPresetRendered=false;
 // Settings Dialog Tabs
@@ -1754,6 +2454,7 @@ document.querySelectorAll('.settings-tab').forEach(tab => {
     if(tab.dataset.tab==='tabMcp') {
       if(!mcpPresetRendered){loadPresetConfig().then(ok=>{if(ok){renderMcpPresets();mcpPresetRendered=true;}});}
       refreshMcpSessions();
+      refreshDshSessions();
     }
   };
 });
@@ -1944,7 +2645,8 @@ document.querySelector('#refreshTags').onclick = () => loadPopularTags(true);
 
 function currentPreferences() {
   return {
-    mode, columns: columnCount(), ratings: ratingChecks(), search: manualSearchTags,
+    mode, columns: columnCount(), ratings: station === 'dflow' ? [...dflowRatings] : [...dflowRatings],
+    pixivRating, pixivDates: readPixivDates(), search: manualSearchTags,
     selectedTags: [...selectedPopularTags]
   };
 }
@@ -1968,13 +2670,40 @@ function schedulePreferenceSave() {
 }
 function applyPreferences(preferences = {}) {
   const validModes = new Set([...document.querySelectorAll('.mode[data-mode]')].map(button => button.dataset.mode));
-  mode = validModes.has(preferences.mode) ? preferences.mode : (station === 'pflow' ? 'pixiv-daily' : 'latest');
-  if (isPixivMode(mode)) station = 'pflow';
+  const savedMode = String(preferences.mode || '');
+  const legacyPixivMode = savedMode === 'pixiv-r18' ? 'pixiv-r18-daily' : savedMode;
+  const hasSavedPixivMode = PIXIV_MODES.has(legacyPixivMode);
+  if (hasSavedPixivMode) {
+    station = 'pflow';
+    pixivRating = PIXIV_R18_MODES.has(legacyPixivMode)
+      ? 'r18'
+      : (preferences.pixivRating === 'r18' ? 'r18' : 'safe');
+    mode = pixivModeForKind(pixivKind(legacyPixivMode), pixivRating);
+  } else if (station === 'pflow') {
+    pixivRating = preferences.pixivRating === 'r18' ? 'r18' : (localStorage.getItem(PIXIV_RATING_KEY) === 'r18' ? 'r18' : 'safe');
+    mode = isPixivMode(savedMode) ? pixivModeForKind(pixivKind(savedMode), pixivRating) : pixivModeForKind('daily', pixivRating);
+  } else {
+    mode = validModes.has(savedMode) && !isPixivMode(savedMode) ? savedMode : 'latest';
+  }
+  localStorage.setItem(PIXIV_RATING_KEY, pixivRating);
   forcedCols = Math.max(3, Math.min(8, Number(preferences.columns) || 5));
   document.documentElement.style.setProperty('--cols', forcedCols);
-  const ratings = Array.isArray(preferences.ratings) && preferences.ratings.length ? new Set(preferences.ratings) : new Set(['g', 's', 'q', 'e']);
-  document.querySelectorAll('.rating-menu input').forEach(input => { input.checked = ratings.has(input.value); });
+  const ratings = Array.isArray(preferences.ratings) && preferences.ratings.length
+    ? new Set(preferences.ratings.filter(value => ['g', 's', 'q', 'e'].includes(value)))
+    : new Set(['g', 's', 'q', 'e']);
+  dflowRatings = ratings.size ? ratings : new Set(['g', 's', 'q', 'e']);
+  if (preferences.pixivDates && typeof preferences.pixivDates === 'object') {
+    const dates = {};
+    for (const modeName of PIXIV_MODES) {
+      const value = preferences.pixivDates[modeName];
+      if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && value <= localIsoDate()) dates[modeName] = value;
+    }
+    localStorage.setItem(PIXIV_DATE_KEY, JSON.stringify(dates));
+  }
   manualSearchTags = normalizeSearchTags(preferences.search);
+  // A persisted Dflow search must not hide the Pflow ranking date controls
+  // after a station switch or a shared-state restore.
+  if (station === 'pflow' && isPixivMode(mode)) manualSearchTags = '';
   searchInput.value = manualSearchTags;
   selectedPopularTags.clear();
   if (Array.isArray(preferences.selectedTags)) preferences.selectedTags.forEach(tag => selectedPopularTags.add(String(tag)));
@@ -1982,21 +2711,27 @@ function applyPreferences(preferences = {}) {
   activateButton(document.querySelector(`[data-mode="${mode}"]`));
   document.querySelector('#favoriteFolders')?.classList.toggle('hidden', mode !== 'favorites');
 }
+
 async function initializeSharedState() {
   await loadPresetConfig();
   const localFavorites = readLocalFavorites();
   let localPreferences = {};
   try { localPreferences = JSON.parse(localStorage.getItem(PREFERENCES_KEY) || '{}'); } catch {}
   favoriteCache = localFavorites;
+  const initialRevision = favoriteStateRevision;
   try {
     const response = await fetch('/api/state', { cache: 'no-store' });
     if (!response.ok) throw Error(`HTTP ${response.status}`);
     const remote = await response.json();
-    sharedUpdatedAt = remote.updatedAt || '';
-    if (Array.isArray(remote.favorites) && remote.favorites.length) {
+    // Do not replace a collection changed while the first state request was in
+    // flight.  This matters on a tablet where the user can tap a card quickly
+    // while the initial page is still booting.
+    const canApplyRemote = initialRevision === favoriteStateRevision;
+    if (canApplyRemote) sharedUpdatedAt = remote.updatedAt || '';
+    if (canApplyRemote && Array.isArray(remote.favorites) && remote.favorites.length) {
       favoriteCache = remote.favorites;
       localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoriteCache));
-    } else if (localFavorites.length) {
+    } else if (canApplyRemote && localFavorites.length) {
       await saveFavorites(localFavorites);
     }
     if (remote.account) {
@@ -2026,29 +2761,69 @@ async function initializeSharedState() {
   if (station === 'dflow') await loadPopularTags();
   load();
 }
+const favoriteLayoutFields = [
+  'id', 'folder', 'prompt', 'positive', 'promptWrittenAt', 'wordedAt', 'completedAt',
+  'autoEnabled', 'queueOrder', 'preset', 'resolvedPreset', 'customInstruction',
+  'image_width', 'image_height', 'imageExt', 'width', 'height',
+  'cacheStatus', 'cacheFile', 'cacheError', 'source', 'rating',
+  'preview_file_url', 'large_file_url', 'file_url'
+];
+function favoriteGalleryNeedsRebuild(previous, next) {
+  if (!Array.isArray(previous) || previous.length !== next.length) return true;
+  const before = new Map(previous.map(item => [String(item.id), item]));
+  for (const item of next) {
+    const old = before.get(String(item.id));
+    if (!old) return true;
+    if (favoriteLayoutFields.some(field => String(old[field] ?? '') !== String(item[field] ?? ''))) return true;
+  }
+  return false;
+}
+function syncRenderedFavoriteCards(items) {
+  if (mode !== 'favorites') return;
+  for (const item of items) {
+    if (postFolder(item) !== favoriteFolder) continue;
+    const selector = favoriteFolder === 'original'
+      ? `.card[data-favorite-id="${CSS.escape(String(item.id))}"]`
+      : `.reverse-card[data-reverse-id="${CSS.escape(String(item.id))}"]`;
+    const card = gallery.querySelector(selector);
+    card?._updateFavoriteState?.(item);
+  }
+}
+
 async function pullSharedFavorites() {
+  if (sharedFavoritesPulling) return;
+  sharedFavoritesPulling = true;
+  const revision = favoriteStateRevision;
   try {
     const response = await fetch('/api/state', { cache: 'no-store' });
     if (!response.ok) return;
     const remote = await response.json();
-    if (!remote.updatedAt || remote.updatedAt === sharedUpdatedAt) return;
-    sharedUpdatedAt = remote.updatedAt;
-    if (Array.isArray(remote.favorites)) {
-      const changed = JSON.stringify(remote.favorites) !== JSON.stringify(favoriteCache);
+    const timestampChanged = Boolean(remote.updatedAt && remote.updatedAt !== sharedUpdatedAt);
+    const favoritesChanged = Array.isArray(remote.favorites) && JSON.stringify(remote.favorites) !== JSON.stringify(favoriteCache);
+    if (!timestampChanged && !favoritesChanged) return;
+    const canApplyFavorites = revision === favoriteStateRevision;
+    if (canApplyFavorites && remote.updatedAt) sharedUpdatedAt = remote.updatedAt;
+    if (Array.isArray(remote.favorites) && favoritesChanged && canApplyFavorites) {
+      const previous = favoriteCache;
       favoriteCache = remote.favorites;
       localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoriteCache));
       updateFavoriteCount();
       document.querySelectorAll('[data-favorite-id]').forEach(button => updateFavoriteButtons(button.dataset.favoriteId));
-      if (changed && mode === 'favorites') refreshFavoriteGallery(true);
-      if(mode === 'metadata') loadMetadataGallery();
+      if (mode === 'favorites') {
+        if (favoriteGalleryNeedsRebuild(previous, favoriteCache)) refreshFavoriteGallery(true);
+        else syncRenderedFavoriteCards(favoriteCache);
+      }
+      if (mode === 'metadata') loadMetadataGallery();
     }
-    if (remote.account) {
+    if (remote.account && timestampChanged && canApplyFavorites) {
       if (remote.account.loginName) localStorage.loginName = remote.account.loginName;
       if (remote.account.loginKey) localStorage.loginKey = remote.account.loginKey;
       if (remote.account.pixivCookie) localStorage.pixivCookie = remote.account.pixivCookie;
       if (remote.account.primaryTranslator) localStorage.primaryTranslator = remote.account.primaryTranslator;
     }
-  } catch {}
+  } catch {} finally {
+    sharedFavoritesPulling = false;
+  }
 }
 sentinel.onclick = () => {
   if (loadFailed) {
@@ -2087,6 +2862,8 @@ document.querySelector('#updateSkipForever').onclick = () => { localStorage.setI
 initializeSharedState();
 setTimeout(checkForUpdates, 900);
 setInterval(pullSharedFavorites, 10000);
+window.addEventListener('focus', () => pullSharedFavorites());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pullSharedFavorites(); });
 
 
 
@@ -2108,140 +2885,90 @@ async function loadMetadataGallery() {
   } catch (error) { statusEl.textContent = `读取元数据失败：${error.message}`; }
   ended = true; sentinel.classList.remove('loading'); sentinel.classList.add('done');
 }
-async function loadWordedGallery(preserveScroll = false) {
+async function loadWordedGallery(preserveScroll = false, renderId = ++galleryRenderRequest) {
+  const requestId = ++wordedGalleryRequest;
+  const requestedFolder = favoriteFolder;
   if (mode !== 'favorites' || !['worded','pending','completed'].includes(favoriteFolder)) return;
   const top = scrollY;
   try {
     const res = await fetch('/api/worded/entries', {cache:'no-store'});
     if (!res.ok) throw Error('HTTP ' + res.status);
     const entries = await res.json();
-    if (mode !== 'favorites' || !['worded','pending','completed'].includes(favoriteFolder)) return;
-    const posts = favoriteVisibleItems();
-    const visible = entries.filter(item => (item.folder || 'worded') === favoriteFolder);
+    // Folder switches and refreshes can overlap.  A late response from the
+    // previous folder must never paint its old card shape over the new view.
+    if (requestId !== wordedGalleryRequest || renderId !== galleryRenderRequest || mode !== 'favorites' || favoriteFolder !== requestedFolder) return;
+    const posts = readFavorites()
+      .filter(item => postFolder(item) === requestedFolder)
+      .filter(favoriteMatches)
+      .sort((a, b) => requestedFolder === 'pending'
+        ? Number(a.autoEnabled === false) - Number(b.autoEnabled === false) ||
+          ((displayQueueOrder(a.queueOrder) ?? Infinity) - (displayQueueOrder(b.queueOrder) ?? Infinity))
+        : compareGalleryItems(a, b, requestedFolder));
+    const visible = entries.filter(item => (item.folder || 'worded') === requestedFolder);
     resetColumns(); currentPosts = posts.slice();
-    if (favoriteFolder === 'worded' || favoriteFolder === 'completed') {
+    if (requestedFolder === 'worded' || requestedFolder === 'completed') {
       const rows = [
         ...posts.map(value => ({ kind: 'favorite', value })),
         ...visible.map(value => ({ kind: 'entry', value }))
       ];
       rows.forEach((row, index) => row.index = index);
-      rows.sort((a, b) => compareGalleryItems(a.value, b.value, favoriteFolder, a.index, b.index));
+      rows.sort((a, b) => compareGalleryItems(a.value, b.value, requestedFolder, a.index, b.index));
       for (const row of rows) {
-        row.kind === 'favorite' ? renderReverseCard(row.value) : renderWordedCard(row.value);
+        row.kind === 'favorite'
+          ? renderReverseCard(row.value, {kind: 'favorite', folder: requestedFolder})
+          : renderWordedCard(row.value);
       }
     } else {
-      render(posts); for (const item of visible) renderWordedCard(item);
+      // Favorites and hand-written cards share one pending queue.  Render them
+      // from one sorted list as well; rendering the two collections separately
+      // lets stale queueOrder values leak into the circular number buttons and
+      // makes the visible order disagree with /api/reverse/queue.
+      const rows = [
+        ...posts.map(value => ({ kind: 'favorite', value })),
+        ...visible.map(value => ({ kind: 'worded', value }))
+      ];
+      rows.forEach((row, index) => { row.index = index; });
+      rows.sort(comparePendingRows);
+      let queuePosition = 0;
+      for (const row of rows) {
+        const options = { kind: row.kind, folder: 'pending' };
+        if (pendingQueueActive(row.value)) options.displayQueueOrder = ++queuePosition;
+        row.kind === 'favorite'
+          ? renderReverseCard(row.value, options)
+          : renderWordedCard(row.value, options);
+      }
     }
-    statusEl.textContent = folderName[favoriteFolder] + ' ' + (posts.length + visible.length) + ' 张';
+    statusEl.textContent = folderName[requestedFolder] + ' ' + (posts.length + visible.length) + ' 张';
     const count = document.querySelector('#wordedCount');
     if (count) count.textContent = entries.filter(item => (item.folder || 'worded') === 'worded').length + readFavorites().filter(item => postFolder(item) === 'worded').length;
     ended = true; sentinel.classList.remove('loading'); sentinel.classList.add('done');
-    if (preserveScroll) requestAnimationFrame(() => scrollTo({top}));
-  } catch (error) { statusEl.textContent = '读取有词区失败：' + error.message; }
+    if (preserveScroll) requestAnimationFrame(() => {
+      if (requestId === wordedGalleryRequest && renderId === galleryRenderRequest && mode === 'favorites' && favoriteFolder === requestedFolder) scrollTo({top});
+    });
+  } catch (error) {
+    if (requestId === wordedGalleryRequest && renderId === galleryRenderRequest) statusEl.textContent = '读取有词区失败：' + error.message;
+  }
 }
 async function changeWordedFolder(item,folder){
+  // Moving a card invalidates every in-flight gallery response before the
+  // PATCH starts, so a late response cannot paint the previous folder or
+  // resurrect its old card renderer.
+  invalidateGalleryRequests();
+  const renderId = galleryRenderRequest;
   try{
     const response=await fetch(`/api/worded/state/${encodeURIComponent(item.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder})});
     const data=await response.json();if(!response.ok)throw Error(data.error||`HTTP ${response.status}`);
-    loadWordedGallery(true);
+    Object.assign(item, data.entry || data.item || {});
+    await loadWordedGallery(true, renderId);
   }catch(error){toast(`移动失败：${error.message}`)}
 }
-function renderWordedCard(item){
-  const itemFolder = item.folder || 'worded';
-  const isLandscape = item.imageExt ? item.width > item.height : false;
-  const isWordedOrCompleted = ['worded', 'completed'].includes(itemFolder);
-  const card = document.createElement('article');
-  card.className = `reverse-card worded-card ${item.imageExt ? (isLandscape ? 'landscape' : 'portrait') : 'text-only'}`;
-  const picture = document.createElement('div'); picture.className = 'reverse-picture';
-  const url = item.imageExt ? `/api/worded/images/${encodeURIComponent(item.id)}?v=${encodeURIComponent(item.imageExt)}` : '';
-  if (item.imageExt) {
-    const img = document.createElement('img'); img.loading = 'lazy'; img.src = url; img.alt = item.name || '有词卡片';
-    img.onclick = () => openLightbox({image_width:item.width, image_height:item.height}, card, img.src); picture.append(img);
-    if (item.width > item.height) picture.style.height = `${Math.min(60, item.height / item.width * 100)}%`;
-    else picture.style.width = `${Math.min(60, item.width / item.height * 100)}%`;
-  } else {
-    const summary = document.createElement('span'); summary.className = 'text-summary'; summary.textContent = item.summary || item.positive.slice(0,30); picture.append(summary);
-    picture.style.height = '60%';
-  }
-  const panel = document.createElement('div'); panel.className = 'reverse-panel';
-  panel.append(createPromptControl(item.positive, {
+function renderWordedCard(item, options = {}) {
+  const folder = ['pending', 'worded', 'completed'].includes(item.folder) ? item.folder : 'worded';
+  return renderReverseCard(item, {
     kind: 'worded',
-    id: item.id,
-    preset: item.preset,
-    imageUrl: url,
-    summary: item.summary,
-    onSaved: value => { item.positive = value; loadWordedGallery(true); }
-  }));
-  if (itemFolder === 'pending') {
-    const status = document.createElement('span'); status.className = 'worded-status';
-    status.textContent = item.reverseStatus === 'failed' ? '错误' : item.reverseStatus === 'processing' ? '处理中' : '等待';
-    panel.append(status);
-    // 反推流程固定使用唯一的“通用反推”，卡片上不再显示反推预设选择框；
-    // 用户只需要为完成后的扩写选择预设。
-    const select=document.createElement('select');
-    select.className='preset-picker';
-    select.setAttribute('aria-label','扩写预设');
-    for(const name of expansionNames()) select.add(new Option(`扩写：${name}`,name));
-    select.value=item.preset || presetConfig.defaultExpansion;
-    select.onchange=async()=>{
-      const previous=item.preset;
-      try{
-        const response=await fetch(`/api/worded/state/${encodeURIComponent(item.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({preset:select.value})});
-        const result=await response.json();
-        if(!response.ok) throw Error(result.error||`HTTP ${response.status}`);
-        item.preset=result.preset || select.value;
-      } catch(error){ select.value=previous || presetConfig.defaultExpansion; toast('扩写预设保存失败：'+error.message); }
-    };
-    panel.append(select);
-  } else if (isWordedOrCompleted) {
-    const panelActions = document.createElement('div');
-    panelActions.className = `panel-actions-bar ${isLandscape ? 'horizontal' : 'vertical'}`;
-
-    const ai = document.createElement('button');
-    ai.type = 'button'; ai.className = 'ai-button'; ai.textContent = 'AI';
-    ai.title = '移至待反推';
-    ai.onclick = event => { event.stopPropagation(); changeWordedFolder(item, 'pending'); };
-
-    const completed = document.createElement('button');
-    completed.type = 'button';
-    completed.className = `completed-button ${itemFolder === 'completed' ? 'active' : ''}`;
-    completed.innerHTML = RELEASE_SVG;
-    completed.title = itemFolder === 'completed' ? '移回有词区' : '释放至已完成';
-    completed.onclick = event => {
-      event.stopPropagation();
-      changeWordedFolder(item, itemFolder === 'completed' ? 'worded' : 'completed');
-    };
-
-    panelActions.append(ai, completed);
-    panel.append(panelActions);
-  }
-
-  if (itemFolder === 'pending') {
-    const pictureActions = document.createElement('div');
-    pictureActions.className = 'pending-picture-actions worded-picture-actions';
-    const back = document.createElement('button');
-    back.type = 'button'; back.className = 'pending-back-button'; back.innerHTML = BACK_SVG;
-    back.title = '返回有词区'; back.setAttribute('aria-label', back.title);
-    back.onclick = event => { event.stopPropagation(); changeWordedFolder(item, 'worded'); };
-    const remove = document.createElement('button');
-    remove.type = 'button'; remove.className = 'worded-picture-delete'; remove.textContent = '×';
-    remove.title = '删除这张自制卡片'; remove.setAttribute('aria-label', remove.title);
-    remove.onclick = async event => {
-      event.stopPropagation();
-      if (!confirm('确定删除这张提示词卡片及本地图片？')) return;
-      try {
-        const response = await fetch(`/api/worded/entries/${encodeURIComponent(item.id)}`, {method:'DELETE'});
-        if (!response.ok) throw Error(`HTTP ${response.status}`);
-        loadWordedGallery(true); toast('已删除卡片');
-      } catch(error) { toast(`删除失败：${error.message}`); }
-    };
-    pictureActions.append(back, remove);
-    picture.append(pictureActions);
-  }
-
-  card.append(picture, panel);
-  card.oncontextmenu = event => showManualMenu(event, item);
-  appendRenderedCard(card);
+    folder,
+    ...options
+  });
 }
 function renderMetadataCard(item, collection = 'metadata') {
   if(collection==='worded')return renderWordedCard(item);
@@ -2283,14 +3010,18 @@ function renderMetadataCard(item, collection = 'metadata') {
 }
 document.querySelector('#manualWorded').onclick=()=>showPromptDialog('',{kind:'create'});
 async function uploadFavoriteImage(id,file) {
+  const revision = ++favoriteStateRevision;
   const bitmap=await createImageBitmap(file);
   const url=`/api/favorites/${encodeURIComponent(id)}/image?width=${bitmap.width}&height=${bitmap.height}`;
   bitmap.close();
   const response=await fetch(url,{method:'PUT',headers:{'Content-Type':file.type},body:file});
   const result=await response.json();if(!response.ok)throw Error(result.error||`HTTP ${response.status}`);
+  if (revision !== favoriteStateRevision) return result.favorite;
   const index=favoriteCache.findIndex(item=>String(item.id)===String(id));
   if(index>=0)favoriteCache[index]=result.favorite;
   localStorage.setItem(FAVORITES_KEY,JSON.stringify(favoriteCache));
+  updateFavoriteCount();
+  return result.favorite;
 }
 async function uploadWordedImage(id,file) {
   const bitmap=await createImageBitmap(file);

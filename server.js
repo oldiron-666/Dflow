@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { inspectPng } from "./metadata.js";
 import { presetDefaults, validatePresets, PRESET_STORE, readPresetLibrary, savePresetLibrary } from "./presets.js";
+import { DshBridgeClient, DshBridgeError, publicBridgeError } from "./dsh-bridge.js";
 import { fileURLToPath } from "node:url";
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -79,12 +80,74 @@ const validReverse = name => presets.reverse.some(x => x.name === name);
 const chosenExpansion = name => validExpansion(name) ? name : presets.defaultExpansion;
 const chosenReverse = name => validReverse(name) ? name : presets.defaultReverse;
 const mcpSessions = new Map();
+let directTargetSessionId = '';
+const dshBridge = new DshBridgeClient();
+const DSH_TARGET_FILE = path.join(DATA_DIR, 'dsh-target.json');
+function readDshTarget() {
+  try {
+    const value = JSON.parse(fs.readFileSync(DSH_TARGET_FILE, 'utf8'));
+    return { sessionId: String(value?.sessionId || ''), title: String(value?.title || ''), updatedAt: String(value?.updatedAt || '') };
+  } catch { return { sessionId: '', title: '', updatedAt: '' }; }
+}
+function writeDshTarget(session) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!session?.sessionId) {
+    try { fs.unlinkSync(DSH_TARGET_FILE); } catch { /* already cleared */ }
+    return readDshTarget();
+  }
+  const next = { sessionId: String(session.sessionId), title: String(session.title || ''), updatedAt: new Date().toISOString() };
+  fs.writeFileSync(DSH_TARGET_FILE, JSON.stringify(next, null, 2), 'utf8');
+  return next;
+}
+function dshSessionLive(session) {
+  return Boolean(session?.metadata?.live) && session?.metadata?.readOnly !== true;
+}
+function dshSessionPayload(session, selectedId = '') {
+  return {
+    sessionId: String(session?.sessionId || ''),
+    externalSessionId: String(session?.externalSessionId || ''),
+    title: String(session?.title || '未命名 DSH 窗口'),
+    cwd: String(session?.cwd || ''),
+    orderingTime: String(session?.orderingTime || ''),
+    live: dshSessionLive(session),
+    persisted: Boolean(session?.metadata?.persisted),
+    readOnly: session?.metadata?.readOnly === true,
+    selected: String(session?.sessionId || '') === String(selectedId || '')
+  };
+}
+async function readDshStatus() {
+  const configured = readDshTarget();
+  const envTarget = String(process.env.DFLOW_DSH_SESSION_ID || '').trim();
+  try {
+    const sessions = await dshBridge.listSessions();
+    const selectedId = configured.sessionId || envTarget;
+    return { ok: true, available: true, configuredSessionId: selectedId, configuredTitle: configured.title, sessions: sessions.map(session => dshSessionPayload(session, selectedId)) };
+  } catch (error) {
+    return { ok: false, available: false, configuredSessionId: configured.sessionId || envTarget, configuredTitle: configured.title, sessions: [], error: publicBridgeError(error) };
+  }
+}
 const localRequest = req => ['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.ip);
-app.get('/api/mcp/sessions', (req, res) => {
-  if (!localRequest(req)) return res.status(403).json({error:'仅本机可管理 MCP 连接'});
-  const now=Date.now();
-  res.json([...mcpSessions.values()].filter(x=>!x.revoked && now-x.seenAt<60000)
-    .map(({id,name,version,since,seenAt})=>({id,name,version,since,seenAt})));
+function activeMcpSessions() {
+  const now = Date.now();
+  return [...mcpSessions.values()].filter(session => !session.revoked && now - session.seenAt < 60000);
+}
+// The browser needs to be able to see connected agents over the LAN so a tablet
+// can choose a direct-reverse target.  Creating, heartbeating and revoking a
+// session remain local-only: a LAN browser must never be able to impersonate an
+// MCP client or disconnect one.
+app.get('/api/mcp/sessions', (_req, res) => {
+  res.json(activeMcpSessions().map(({id,name,version,since,seenAt}) => ({id,name,version,since,seenAt})));
+});
+app.get('/api/mcp/direct-target', (_req, res) => {
+  const target = directTargetSessionId ? directSessionById(directTargetSessionId) : null;
+  if (directTargetSessionId && !target) directTargetSessionId = '';
+  res.json({ sessionId: directTargetSessionId, online: Boolean(target) });
+});
+app.put('/api/mcp/direct-target', (req, res) => {
+  const id = String(req.body?.sessionId || '').trim();
+  if (id && !directSessionById(id)) return res.status(409).json({ error: '指定的 MCP Agent 当前不在线' });
+  directTargetSessionId = id;
+  res.json({ sessionId: directTargetSessionId, online: Boolean(id) });
 });
 app.post('/api/mcp/sessions', (req,res) => {
   if (!localRequest(req)) return res.sendStatus(403);
@@ -105,6 +168,176 @@ app.delete('/api/mcp/sessions/:id', (req,res) => {
   session.revoked=true;res.json({ok:true});
 });
 app.get('/api/mcp/setup', (req,res)=>{if(!localRequest(req))return res.sendStatus(403);res.json({command:process.execPath,args:[path.join(__dirname,'mcp-server.js')],port:PORT});});
+
+// DSH Desktop's local bridge is optional. It is used only to send a short
+// wake-up message to the selected DSH chat; the actual image workflow still
+// runs through the normal stdio MCP tools and the persisted DFlow queue.
+app.get('/api/dsh/status', async (_req, res) => res.json(await readDshStatus()));
+app.get('/api/dsh/sessions', async (_req, res) => res.json(await readDshStatus()));
+app.put('/api/dsh/target', async (req, res) => {
+  const sessionId = String(req.body?.sessionId || '').trim();
+  if (!sessionId) return res.json({ ok: true, target: writeDshTarget(null) });
+  const status = await readDshStatus();
+  if (!status.available) return res.status(503).json({ error: status.error || 'DSH Bridge 不可用' });
+  const session = status.sessions.find(item => item.sessionId === sessionId && item.live && !item.readOnly);
+  if (!session) return res.status(409).json({ error: '指定的 DSH 窗口当前不在线或不可写入' });
+  const target = writeDshTarget({ sessionId: session.sessionId, title: session.title });
+  res.json({ ok: true, target });
+});
+
+// A direct request is deliberately persisted in data/ so a tablet can enqueue
+// one image while the connected MCP client claims it a moment later.  The data
+// directory is ignored by git and may contain private favorites/cache files.
+const DIRECT_REQUEST_FILE = path.join(REVERSE_DIR, 'direct-requests.json');
+function readDirectRequests() {
+  try {
+    const list = JSON.parse(fs.readFileSync(DIRECT_REQUEST_FILE, 'utf8'));
+    return Array.isArray(list) ? list : [];
+  } catch { return []; }
+}
+function writeDirectRequests(list) {
+  fs.mkdirSync(REVERSE_DIR, { recursive: true });
+  const serialized = JSON.stringify(list.slice(-1000), null, 2);
+  // Keep the queue readable even if the process is interrupted while writing.
+  // On Windows rename can reject an existing destination, so remove it only
+  // after the complete temporary file has been flushed.
+  const temporary = `${DIRECT_REQUEST_FILE}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporary, serialized, 'utf8');
+  try {
+    fs.renameSync(temporary, DIRECT_REQUEST_FILE);
+  } catch (error) {
+    if (!['EEXIST', 'EPERM', 'ENOTEMPTY'].includes(error.code)) throw error;
+    fs.rmSync(DIRECT_REQUEST_FILE, { force: true });
+    fs.renameSync(temporary, DIRECT_REQUEST_FILE);
+  }
+}
+function activeDirectRequestIn(list, itemId) {
+  return list.filter(request => String(request.itemId) === String(itemId) && ['queued', 'processing'].includes(request.status))
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))[0] || null;
+}
+function activeDirectRequest(itemId) {
+  return activeDirectRequestIn(readDirectRequests(), itemId);
+}
+// Every direct-request read/modify/write operation goes through this queue.
+// The browser, DSH bridge dispatch, and MCP claim can all arrive at the same
+// time; without serialization, a stale snapshot could overwrite a newer
+// request and make the DSH Agent receive an ID that no longer exists.
+let directRequestMutationTail = Promise.resolve();
+function mutateDirectRequests(mutator) {
+  const operation = directRequestMutationTail.then(() => {
+    const list = readDirectRequests();
+    const result = mutator(list);
+    writeDirectRequests(list);
+    return result;
+  });
+  directRequestMutationTail = operation.catch(() => undefined);
+  return operation;
+}
+function findReverseTarget(id, pendingOnly = true) {
+  const favorite = favoriteById(id);
+  if (favorite && (!pendingOnly || favorite.folder === 'pending')) return { kind: 'favorite', item: favorite };
+  const manual = readWordIndex().find(item => String(item.id) === String(id) && (!pendingOnly || item.folder === 'pending'));
+  return manual ? { kind: 'worded', item: manual } : null;
+}
+function directTargetPayload(target) {
+  if (!target) return null;
+  const item = target.item;
+  const payload = target.kind === 'favorite'
+    ? cleanFavorite(item)
+    : { ...item, id: String(item.id), imagePath: item.imageExt ? path.join(WORDED_IMAGE_DIR, `${item.id}.${item.imageExt}`) : '' };
+  const request = activeDirectRequest(item.id);
+  if (request?.dshDispatch) payload.dshDispatch = request.dshDispatch;
+  return payload;
+}
+function directSessionById(id) {
+  return activeMcpSessions().find(session => String(session.id) === String(id)) || null;
+}
+function latestDirectSession() {
+  return activeMcpSessions().sort((a, b) => b.seenAt - a.seenAt)[0] || null;
+}
+function isDshMcpSession(session) {
+  const label = `${session?.name || ''} ${session?.version || ''}`.toLowerCase();
+  return label.includes('dsh') || label.includes('deepseek desktop') || label.includes('deepseek-harness');
+}
+function latestDshMcpSession() {
+  return activeMcpSessions().filter(isDshMcpSession).sort((a, b) => b.seenAt - a.seenAt)[0] || null;
+}
+function chooseDirectMcpSession(requestedSessionId = '') {
+  if (requestedSessionId) return directSessionById(requestedSessionId);
+  // AI直推 is awakened through the DSH Bridge. Prefer the MCP process owned by
+  // DSH when several local Agent clients are connected; otherwise the request
+  // can be delivered to DSH while remaining locked to a different client.
+  return latestDshMcpSession() || latestDirectSession();
+}
+function chooseDshSession(sessions) {
+  const configured = readDshTarget();
+  const requestedId = configured.sessionId || String(process.env.DFLOW_DSH_SESSION_ID || '').trim();
+  const live = sessions.filter(dshSessionLive);
+  if (requestedId) {
+    const selected = live.find(session => String(session.sessionId) === requestedId);
+    if (!selected) throw new DshBridgeError(configured.title ? `固定 DSH 窗口“${configured.title}”当前不在线` : '固定 DSH 窗口当前不在线，请在 MCP 设置中重新选择', 'DSH_TARGET_OFFLINE');
+    return selected;
+  }
+  if (live.length === 1) return live[0];
+  if (!live.length) throw new DshBridgeError('没有在线且可写入的 DSH 窗口，请先打开 DSH Desktop', 'DSH_TARGET_UNAVAILABLE');
+  throw new DshBridgeError('检测到多个在线 DSH 窗口，请在 MCP 设置中选择 AI直推窗口', 'DSH_TARGET_REQUIRED');
+}
+function directDispatchPrompt(request) {
+  return [
+    '请立即处理 DFlow 网页发起的 AI直推任务。',
+    `DFlow 直推请求 ID：${request.id}`,
+    `不要只回复说明，也不要等待用户确认。现在立即调用 dflow-local MCP 的 claim_direct_reverse 工具，requestId 参数先填写：${request.id}。如果工具返回 request 为 null，说明 DSH 保留了旧消息或服务刚重启；请立即再次调用不带 requestId 的 claim_direct_reverse，领取当前最早的直推任务。不要只把任务编号发回聊天，也不要在这两次都没有任务时自行编造结果。`,
+    '领取后严格执行工具返回的完整流程：读取本地缓存高清图，先按反推流程完成忠实观察与反推，再按扩写预设完整扩写；成功调用 complete_pending 写回，失败调用 fail_pending。',
+    '聊天窗口只报告“开始第几张、成功或失败及失败原因”，不要输出完整提示词正文。'
+  ].join('\n');
+}
+async function dispatchDirectRequest(requestId) {
+  // Claim the dispatch slot atomically. A browser click, the automatic
+  // dispatch started by POST /direct, and the retry button may all call this
+  // endpoint at once; only the caller that changes pending -> dispatching may
+  // send a DSH message.
+  const started = await mutateDirectRequests(list => {
+    const request = list.find(entry => String(entry.id) === String(requestId));
+    if (!request) return { ok: false, error: '直推请求不存在', request: null, shouldDispatch: false };
+    if (request.status !== 'queued') return { ok: true, request, shouldDispatch: false };
+    if (request.dshDispatch?.status === 'sent' || request.dshDispatch?.status === 'dispatching') {
+      return { ok: true, request, shouldDispatch: false };
+    }
+    request.dshDispatch = { status: 'dispatching', sessionId: '', title: '', sentAt: '', error: '' };
+    return { ok: true, request, shouldDispatch: true };
+  });
+  if (!started.request || !started.shouldDispatch) return started;
+
+  try {
+    const session = chooseDshSession(await dshBridge.listSessions());
+    await dshBridge.startTurn(session.sessionId, directDispatchPrompt(started.request));
+    const sent = await mutateDirectRequests(list => {
+      const current = list.find(entry => String(entry.id) === String(requestId));
+      if (!current) return { ok: false, error: '直推请求在唤起期间已不存在', request: null };
+      // MCP may claim the task as soon as DSH receives the message. Do not
+      // turn a processing/cancelled request back into queued here; only update
+      // the dispatch metadata.
+      if (current.status !== 'cancelled' && current.status !== 'completed' && current.status !== 'failed') {
+        current.dshDispatch = { status: 'sent', sessionId: session.sessionId, title: session.title, sentAt: new Date().toISOString(), error: '' };
+      }
+      return { ok: true, request: current };
+    });
+    return sent;
+  } catch (error) {
+    const message = publicBridgeError(error);
+    const failed = await mutateDirectRequests(list => {
+      const current = list.find(entry => String(entry.id) === String(requestId));
+      if (!current) return { ok: false, error: '直推请求在唤起期间已不存在', request: null };
+      // If the Agent claimed the request while the bridge call was in flight,
+      // preserve its processing state and let the UI continue polling.
+      if (current.status === 'queued' && current.dshDispatch?.status === 'dispatching') {
+        current.dshDispatch = { status: 'failed', sessionId: '', title: '', sentAt: '', error: message };
+      }
+      return { ok: false, request: current, error: message };
+    });
+    return { ok: false, request: failed.request || started.request, error: failed.error || message };
+  }
+}
 app.get('/api/mcp/presets', (_req,res)=>res.json(presets));
 app.put('/api/mcp/presets', (req,res)=>{
   try {
@@ -124,7 +357,7 @@ const defaultSharedState = () => ({
     volcAccessKey: "", volcSecretKey: ""
   },
   favorites: [],
-  preferences: { mode: "latest", columns: 5, ratings: ["g", "s", "q", "e"], search: "", selectedTags: [] },
+  preferences: { mode: "latest", columns: 5, ratings: ["g", "s", "q", "e"], pixivRating: "safe", pixivDates: {}, search: "", selectedTags: [] },
   updatedAt: null
 });
 function readSharedState() {
@@ -141,20 +374,42 @@ function readSharedState() {
   }
 }
 let sharedState = readSharedState();
+// Queue numbers are display/order metadata, not timestamps.  Older versions
+// accidentally stored Date.now() here, which made the circular button show
+// values such as "1790" after the long number overflowed its fixed width.
+const MAX_QUEUE_ORDER = 1000000;
+function safeQueueOrder(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 && number <= MAX_QUEUE_ORDER ? number : null;
+}
 function renumberReverseQueue() {
   const entries = sharedState.favorites.map((item, index) => ({item, index}))
-    .filter(({item}) => item.folder === "pending" && item.autoEnabled);
-  entries.sort((a, b) => (a.item.queueOrder || Infinity) - (b.item.queueOrder || Infinity) || a.index - b.index);
+    .filter(({item}) => item.folder === "pending" && item.autoEnabled !== false);
+  entries.sort((a, b) =>
+    (safeQueueOrder(a.item.queueOrder) ?? Infinity) - (safeQueueOrder(b.item.queueOrder) ?? Infinity) ||
+    a.index - b.index
+  );
   entries.forEach(({item}, index) => { item.queueOrder = index + 1; });
-  sharedState.favorites.filter(item => item.folder !== "pending" || !item.autoEnabled)
+  sharedState.favorites.filter(item => item.folder !== "pending" || item.autoEnabled === false)
     .forEach(item => { item.queueOrder = 0; });
 }
 function nextReverseOrder() {
-  return Math.max(0, ...sharedState.favorites.map(item => item.folder === "pending" ? item.queueOrder || 0 : 0)) + 1;
+  let maximum = Math.max(0, ...sharedState.favorites.map(item =>
+    item.folder === "pending" && item.autoEnabled !== false ? (safeQueueOrder(item.queueOrder) || 0) : 0
+  ));
+  // The worded index is initialized later in this file.  All callers run
+  // after startup, so include its pending cards when assigning a new order.
+  try {
+    const manual = readWordIndex();
+    maximum = Math.max(maximum, ...manual.map(item =>
+      item.folder === "pending" && item.autoEnabled !== false ? (safeQueueOrder(item.queueOrder) || 0) : 0
+    ));
+  } catch { /* the index is not ready during module initialization */ }
+  return maximum + 1;
 }
 function reverseQueueSnapshot() {
-  return sharedState.favorites.filter(item => item.folder === "pending")
-    .map(item => ({id:item.id, autoEnabled:item.autoEnabled, queueOrder:item.queueOrder}));
+  const queue = renumberAllPendingQueue();
+  return queue.items.map(({item}) => ({id:item.id, autoEnabled:item.autoEnabled, queueOrder:item.queueOrder}));
 }
 renumberReverseQueue();
 function writeSharedState() {
@@ -202,6 +457,8 @@ function cleanFavorite(post) {
     promptWrittenAt: String(post.promptWrittenAt || ""),
     wordedAt: String(post.wordedAt || ""),
     completedAt: String(post.completedAt || ""),
+    directRequestId: String(post.directRequestId || ""),
+    directStatus: String(post.directStatus || ""),
     createdAt: String(post.createdAt || post.created_at || ""),
     updatedAt: String(post.updatedAt || "")
   };
@@ -526,7 +783,12 @@ app.post('/api/translate-test', async (req, res) => {
   }
 });
 
-app.get("/api/state", (_req, res) => res.json(sharedState));
+app.get("/api/state", (_req, res) => {
+  if (reconcileFavoriteCaches()) writeSharedState();
+  renumberAllPendingQueue();
+  for (const item of sharedState.favorites) if (item.cacheStatus === "idle") scheduleCache(item.id);
+  res.json(sharedState);
+});
 app.put("/api/account", (req, res) => {
   const body = req.body || {};
   sharedState.account = {
@@ -550,15 +812,19 @@ app.put("/api/account", (req, res) => {
 app.put("/api/preferences", (req, res) => {
   const allowedModes = new Set([
     "latest", "popular-day", "popular-week", "popular-month", "viewed", "favcount", "comment", "upvotes", "score", "rank", "mpixels", "favorites", "metadata",
-    "pixiv-daily", "pixiv-weekly", "pixiv-monthly", "pixiv-ai", "pixiv-r18"
+    "pixiv-daily", "pixiv-weekly", "pixiv-monthly", "pixiv-ai", "pixiv-r18-daily", "pixiv-r18-weekly", "pixiv-r18-ai", "pixiv-r18"
   ]);
   const validRatings = ["g", "s", "q", "e"];
   const body = req.body || {};
   const ratings = Array.isArray(body.ratings) ? body.ratings.filter(x => validRatings.includes(x)) : sharedState.preferences.ratings;
+  const pixivRating = body.pixivRating === 'r18' ? 'r18' : (body.pixivRating === 'safe' ? 'safe' : (sharedState.preferences.pixivRating || 'safe'));
+  const pixivDates = body.pixivDates && typeof body.pixivDates === 'object' ? Object.fromEntries(Object.entries(body.pixivDates).filter(([key, value]) => /^pixiv(?:-r18)?-(?:daily|weekly|monthly|ai)$/.test(key) && /^\d{4}-\d{2}-\d{2}$/.test(String(value)))) : (sharedState.preferences.pixivDates || {});
   sharedState.preferences = {
     mode: allowedModes.has(body.mode) ? body.mode : sharedState.preferences.mode,
     columns: Math.max(3, Math.min(8, Number(body.columns) || sharedState.preferences.columns || 5)),
     ratings: ratings.length ? [...new Set(ratings)] : sharedState.preferences.ratings,
+    pixivRating,
+    pixivDates,
     search: String(body.search ?? sharedState.preferences.search ?? "").slice(0, 1000),
     selectedTags: Array.isArray(body.selectedTags) ? [...new Set(body.selectedTags.map(String))].slice(0, 100) : sharedState.preferences.selectedTags
   };
@@ -583,17 +849,16 @@ app.put("/api/favorites", (req, res) => {
     const kept = new Set(sharedState.favorites.map(item => String(item.id)));
     for (const prior of oldById.values()) {
       if (kept.has(String(prior.id))) continue;
-      const file = imagePath(prior);
-      if (file) fs.rmSync(file, {force:true});
+      // A favorite can be removed while a previous folder move is still
+      // being reconciled.  Do not only use the recorded folder here: locate
+      // and remove every managed copy belonging to this id so an old cache is
+      // not left behind on disk.
+      removeFavoriteCaches(prior);
     }
-    for (const item of sharedState.favorites) {
-      if (item.cacheStatus === "ready" && !fs.existsSync(imagePath(item) || "")) {
-        item.cacheFile = ""; item.cacheStatus = "idle"; item.cacheError = "";
-      }
-    }
+    reconcileFavoriteCaches();
     const changedAt = new Date().toISOString();
     for (const item of sharedState.favorites) item.updatedAt = item.updatedAt || changedAt;
-    renumberReverseQueue();
+    renumberAllPendingQueue();
     writeSharedState();
     // New and old favorites with no usable cache are both eligible. This also
     // repairs clients that reconnect after a previous download failure.
@@ -615,13 +880,128 @@ function imagePath(item) {
 function cacheDirectory(folder) {
   return folder === "completed" ? COMPLETED_IMAGE_DIR : folder === "worded" ? WORDED_IMAGE_DIR : folder === "original" ? ORIGINAL_IMAGE_DIR : PENDING_IMAGE_DIR;
 }
+const FAVORITE_CACHE_DIRS = [ORIGINAL_IMAGE_DIR, PENDING_IMAGE_DIR, WORDED_IMAGE_DIR, COMPLETED_IMAGE_DIR];
+const FAVORITE_CACHE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif"];
+function isFile(file) {
+  try { return fs.statSync(file).isFile(); } catch { return false; }
+}
+function locateFavoriteCache(item) {
+  const recorded = imagePath(item);
+  if (recorded && isFile(recorded)) return { file: recorded, filename: path.basename(recorded) };
+
+  // First look for the recorded filename in every managed folder.  This also
+  // repairs a state file whose folder field was updated before the disk move.
+  const recordedName = typeof item?.cacheFile === "string" && /^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif)$/i.test(item.cacheFile)
+    ? item.cacheFile : "";
+  if (recordedName) {
+    const expectedDir = cacheDirectory(item.folder);
+    const dirs = [expectedDir, ...FAVORITE_CACHE_DIRS.filter(dir => dir !== expectedDir)];
+    for (const dir of dirs) {
+      const file = path.join(dir, recordedName);
+      if (isFile(file)) return { file, filename: recordedName };
+    }
+  }
+
+  // Cache filenames are normally generated from the favorite ID. Search its
+  // current folder first, then other managed folders for an interrupted move.
+  const id = String(item?.id ?? "");
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) return null;
+  const expectedDir = cacheDirectory(item.folder);
+  const dirs = [expectedDir, ...FAVORITE_CACHE_DIRS.filter(dir => dir !== expectedDir)];
+  for (const dir of dirs) {
+    for (const ext of FAVORITE_CACHE_EXTENSIONS) {
+      const filename = id + "." + ext;
+      const file = path.join(dir, filename);
+      if (isFile(file)) return { file, filename };
+    }
+  }
+  return null;
+}
+function cachedImagePath(item) {
+  return locateFavoriteCache(item)?.file || null;
+}
+function removeFavoriteCaches(item) {
+  const names = new Set();
+  const recorded = typeof item?.cacheFile === "string" && /^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif)$/i.test(item.cacheFile)
+    ? item.cacheFile : "";
+  if (recorded) names.add(recorded);
+  const id = String(item?.id ?? "");
+  if (/^[a-zA-Z0-9_-]+$/.test(id)) {
+    for (const ext of FAVORITE_CACHE_EXTENSIONS) names.add(`${id}.${ext}`);
+  }
+  for (const dir of FAVORITE_CACHE_DIRS) {
+    for (const name of names) {
+      try { fs.rmSync(path.join(dir, name), { force: true }); } catch (error) { console.error("清理收藏缓存失败：", error.message); }
+    }
+  }
+}
+function reconcileFavoriteCache(item) {
+  if (!item || !["original", "pending", "worded", "completed"].includes(item.folder)) return false;
+  const id = String(item.id);
+  const expectedDir = cacheDirectory(item.folder);
+  const found = locateFavoriteCache(item);
+  let changed = false;
+
+  if (found) {
+    const target = path.join(expectedDir, found.filename);
+    if (path.resolve(found.file) !== path.resolve(target)) {
+      try {
+        fs.mkdirSync(expectedDir, { recursive: true });
+        if (isFile(target)) {
+          // The target is already a usable copy.  Prefer it and discard only
+          // the misplaced duplicate; never make state reconciliation fail.
+          fs.rmSync(found.file, { force: true });
+        } else {
+          try {
+            fs.renameSync(found.file, target);
+          } catch (renameError) {
+            // Rename can fail across volumes or when another process briefly
+            // holds the file.  Copy+remove is a safe fallback; if that also
+            // fails, keep the original file and continue reporting it ready.
+            try {
+              fs.copyFileSync(found.file, target);
+              fs.rmSync(found.file, { force: true });
+            } catch (copyError) {
+              console.error("校准收藏缓存位置失败：", copyError.message || renameError.message);
+            }
+          }
+        }
+      } catch (error) {
+        // Cache repair is best effort.  A bad/moving cache must not turn the
+        // whole /api/state request into HTTP 500.
+        console.error("校准收藏缓存失败：", error.message);
+      }
+    }
+    if (item.cacheFile !== found.filename || item.cacheStatus !== "ready" || item.cacheError) {
+      item.cacheFile = found.filename;
+      item.cacheStatus = "ready";
+      item.cacheError = "";
+      changed = true;
+    }
+    return changed;
+  }
+
+  if (item.cacheFile) { item.cacheFile = ""; changed = true; }
+  if (item.cacheStatus === "ready" || (item.cacheStatus === "loading" && !cacheJobs.has(id))) {
+    item.cacheStatus = "idle";
+    item.cacheError = "";
+    changed = true;
+  } else if (!item.cacheStatus) {
+    item.cacheStatus = "idle";
+    changed = true;
+  }
+  return changed;
+}
+function reconcileFavoriteCaches() {
+  let changed = false;
+  for (const item of sharedState.favorites) changed = reconcileFavoriteCache(item) || changed;
+  return changed;
+}
 function hasUsableCache(item) {
-  const file = imagePath(item);
-  return item?.cacheStatus === "ready" && Boolean(file && fs.existsSync(file));
+  return Boolean(locateFavoriteCache(item));
 }
 function resetCacheForRetry(item) {
-  const file = imagePath(item);
-  if (file) fs.rmSync(file, {force:true});
+  removeFavoriteCaches(item);
   item.cacheFile = "";
   item.cacheStatus = "idle";
   item.cacheError = "";
@@ -756,6 +1136,7 @@ app.post('/api/favorites/retry-cache', (req, res) => {
     let queued = 0;
     for (const item of sharedState.favorites) {
       if (requestedFolder !== 'all' && item.folder !== requestedFolder) continue;
+      reconcileFavoriteCache(item);
       if (hasUsableCache(item)) continue;
       if (cacheJobs.has(String(item.id))) { queued++; continue; }
       resetCacheForRetry(item);
@@ -772,15 +1153,37 @@ app.post('/api/favorites/retry-cache', (req, res) => {
   }
 });
 function moveCache(item, target) {
-  const source = imagePath(item);
-  if (source && fs.existsSync(source)) {
-    const destDir = cacheDirectory(target);
+  const found = locateFavoriteCache(item);
+  if (!found) return false;
+  const source = found.file;
+  const filename = found.filename;
+  const destDir = cacheDirectory(target);
+  const destination = path.join(destDir, filename);
+  if (path.resolve(source) === path.resolve(destination)) {
+    item.cacheFile = filename;
+    item.cacheStatus = "ready";
+    return true;
+  }
+  try {
     fs.mkdirSync(destDir, {recursive:true});
-    const destination = path.join(destDir, item.cacheFile);
-    if (source !== destination) {
-      fs.rmSync(destination, {force:true});
-      fs.renameSync(source, destination);
+    if (isFile(destination)) fs.rmSync(source, {force:true});
+    else {
+      try { fs.renameSync(source, destination); }
+      catch (renameError) {
+        try { fs.copyFileSync(source, destination); fs.rmSync(source, {force:true}); }
+        catch (copyError) {
+          console.error("移动收藏缓存失败：", copyError.message || renameError.message);
+          return false;
+        }
+      }
     }
+    item.cacheFile = filename;
+    item.cacheStatus = "ready";
+    item.cacheError = "";
+    return true;
+  } catch (error) {
+    console.error("移动收藏缓存失败：", error.message);
+    return false;
   }
 }
 app.patch("/api/favorites/:id", (req, res) => {
@@ -788,9 +1191,12 @@ app.patch("/api/favorites/:id", (req, res) => {
   if (!item) return res.status(404).json({error:"Favorite not found"});
   const body = req.body || {};
   const changedAt = new Date().toISOString();
+  // Repair an existing on-disk cache before validating a folder move.  This
+  // lets a cache whose recorded path is stale remain usable.
+  reconcileFavoriteCache(item);
   if (body.folder !== undefined) {
     if (!["original","pending","worded","completed"].includes(body.folder)) return res.status(400).json({error:"Invalid folder"});
-    if (["pending","worded"].includes(item.folder) && body.folder === "completed" && (!item.prompt || item.cacheStatus !== "ready" || !fs.existsSync(imagePath(item) || ""))) return res.status(409).json({error:"Prompt and cached image required before release"});
+    if (["pending","worded"].includes(item.folder) && body.folder === "completed" && (!item.prompt || !hasUsableCache(item))) return res.status(409).json({error:"Prompt and cached image required before release"});
     if (body.folder !== item.folder) moveCache(item, body.folder);
     item.folder = body.folder; item.completed = body.folder === "completed";
     if (body.folder === "pending") { item.autoEnabled = true; item.reverseStatus = "idle"; item.queueOrder = nextReverseOrder(); }
@@ -822,63 +1228,306 @@ app.patch("/api/favorites/:id", (req, res) => {
   }
   if (body.retryCache) resetCacheForRetry(item);
   if (body.retryReverse && item.folder === "pending") { item.reverseStatus = "idle"; item.reverseError = ""; item.autoEnabled = true; item.queueOrder = nextReverseOrder(); }
-  renumberReverseQueue();
+  renumberAllPendingQueue();
   writeSharedState();
   if (item.cacheStatus === "idle") scheduleCache(item.id);
   res.json({ok:true, favorite:item, queue:reverseQueueSnapshot(), updatedAt:sharedState.updatedAt});
 });
 app.get("/api/reverse/queue", (_req, res) => {
-  const pending = sharedState.favorites.filter(item => item.folder === "pending").sort((a,b) => (a.queueOrder || Infinity) - (b.queueOrder || Infinity));
-  const manual=readWordIndex().filter(item=>item.folder==='pending');
-  const all=[...pending.map(item=>({id:item.id,preset:item.preset,reversePreset:chosenReverse(item.reversePreset),autoEnabled:item.autoEnabled,queueOrder:item.queueOrder,reverseStatus:item.reverseStatus,cacheStatus:item.cacheStatus,cacheError:item.cacheError,reverseError:item.reverseError,customInstruction:item.customInstruction,hasPrompt:Boolean(item.prompt),imagePath:item.cacheStatus==='ready'?imagePath(item):null})),...manual.map(item=>({id:item.id,preset:chosenExpansion(item.preset),reversePreset:chosenReverse(item.reversePreset),autoEnabled:item.autoEnabled!==false,queueOrder:item.queueOrder||0,reverseStatus:item.reverseStatus||'idle',cacheStatus:item.imageExt?'ready':'error',cacheError:'',reverseError:item.reverseError||'',customInstruction:'',hasPrompt:Boolean(item.positive),imagePath:item.imageExt?path.join(WORDED_IMAGE_DIR,item.id+'.'+item.imageExt):null}))];
+  const queue = renumberAllPendingQueue();
+  // Keep the old API contract: list every pending card, not only cards that
+  // are currently enabled for automatic processing.  Active cards come from
+  // the single renumbered queue; cards that were removed with the + button are
+  // appended with queueOrder 0 so MCP can still show them and their prompt
+  // status without treating them as eligible work.
+  const records = [
+    ...queue.items,
+    ...sharedState.favorites
+      .filter(item => item.folder === 'pending' && item.autoEnabled === false)
+      .map(item => ({kind: 'favorite', item})),
+    ...queue.worded
+      .filter(item => item.folder === 'pending' && item.autoEnabled === false)
+      .map(item => ({kind: 'worded', item}))
+  ];
+  const all = records.map(({kind, item}) => kind === 'favorite'
+    ? ({
+        id:item.id, preset:item.preset, reversePreset:chosenReverse(item.reversePreset),
+        autoEnabled:item.autoEnabled !== false, queueOrder:item.queueOrder || 0,
+        reverseStatus:item.reverseStatus, cacheStatus:item.cacheStatus,
+        cacheError:item.cacheError, reverseError:item.reverseError,
+        customInstruction:item.customInstruction, hasPrompt:Boolean(item.prompt),
+        imagePath:hasUsableCache(item) ? cachedImagePath(item) : null
+      })
+    : ({
+        id:item.id, preset:chosenExpansion(item.preset), reversePreset:chosenReverse(item.reversePreset),
+        autoEnabled:item.autoEnabled !== false, queueOrder:item.queueOrder || 0,
+        reverseStatus:item.reverseStatus || 'idle',
+        cacheStatus:item.imageExt && fs.existsSync(path.join(WORDED_IMAGE_DIR,item.id+'.'+item.imageExt)) ? 'ready' : 'error',
+        cacheError:'', reverseError:item.reverseError || '', customInstruction:'',
+        hasPrompt:Boolean(item.positive),
+        imagePath:item.imageExt ? path.join(WORDED_IMAGE_DIR,item.id+'.'+item.imageExt) : null
+      }));
   res.json({total:all.length, withoutPrompt:all.filter(item=>!item.hasPrompt).length,
-    eligible:all.filter(item=>item.autoEnabled&&item.cacheStatus==='ready'&&item.reverseStatus==='idle').length,items:all});
+    eligible:all.filter(item=>item.autoEnabled&&item.cacheStatus==='ready'&&(!item.reverseStatus||item.reverseStatus==='idle')).length,items:all});
 });
 app.post("/api/reverse/next", (_req, res) => {
-  const item = sharedState.favorites.filter(x => x.folder === "pending" && x.autoEnabled && x.cacheStatus === "ready" && x.reverseStatus === "idle")
-    .sort((a,b) => a.queueOrder - b.queueOrder)[0];
-  if (!item) {
-    const list=readWordIndex(),manual=list.filter(x=>x.folder==='pending'&&x.autoEnabled!==false&&x.imageExt&&(!x.reverseStatus||x.reverseStatus==='idle')).sort((a,b)=>(a.queueOrder||0)-(b.queueOrder||0))[0];
-    if(!manual)return res.json({item:null});
-    manual.reverseStatus='processing';saveWordIndex(list);
-    return res.json({item:{id:manual.id,preset:chosenExpansion(manual.preset),reversePreset:chosenReverse(manual.reversePreset),customInstruction:'',imagePath:path.join(WORDED_IMAGE_DIR,manual.id+'.'+manual.imageExt)}});
+  const queue = renumberAllPendingQueue();
+  const candidate = queue.items.find(({kind, item}) =>
+    item.autoEnabled !== false &&
+    (kind === 'favorite' ? hasUsableCache(item) : Boolean(item.imageExt && fs.existsSync(path.join(WORDED_IMAGE_DIR, item.id+'.'+item.imageExt)))) &&
+    (!item.reverseStatus || item.reverseStatus === 'idle')
+  );
+  if (!candidate) return res.json({item:null});
+  const {kind, item} = candidate;
+  item.reverseStatus = 'processing';
+  item.reverseError = '';
+  item.reverseStartedAt = new Date().toISOString();
+  if (kind === 'favorite') {
+    writeSharedState();
+    return res.json({item:{id:item.id, preset:item.preset, reversePreset:chosenReverse(item.reversePreset), customInstruction:item.customInstruction, imagePath:cachedImagePath(item)}});
   }
-  item.reverseStatus = "processing"; item.reverseError = ""; item.reverseStartedAt = new Date().toISOString();
-  writeSharedState();
-  res.json({item:{id:item.id, preset:item.preset, reversePreset:chosenReverse(item.reversePreset), customInstruction:item.customInstruction, imagePath:imagePath(item)}});
+  saveWordIndex(queue.worded);
+  return res.json({item:{id:item.id, preset:chosenExpansion(item.preset), reversePreset:chosenReverse(item.reversePreset), customInstruction:'', imagePath:path.join(WORDED_IMAGE_DIR,item.id+'.'+item.imageExt)}});
 });
-app.post("/api/reverse/:id/result", (req, res) => {
-  const item = favoriteById(req.params.id);
-  if(!item){
-    const list=readWordIndex(),manual=list.find(x=>x.id===req.params.id);
-    if(!manual||manual.folder!=='pending'||manual.reverseStatus!=='processing')return res.status(409).json({error:'Item is not processing in the queue'});
-    const prompt=String(req.body?.prompt||'').trim(),preset=String(req.body?.resolvedPreset||chosenExpansion(manual.preset));
-    if(!expansionNames().includes(preset)||(manual.preset!=='随机'&&preset!==(chosenExpansion(manual.preset))))return res.status(400).json({error:'Preset mismatch'});
-    if(prompt.length<(preset==='瑶光真人'?45:250))return res.status(422).json({error:'Prompt too short'});
-    manual.positive=prompt.slice(0,100000);manual.folder='worded';manual.promptWrittenAt=new Date().toISOString();manual.wordedAt=manual.promptWrittenAt;manual.autoEnabled=false;manual.reverseStatus='success';manual.reverseError='';saveWordIndex(list);return res.json({ok:true,item:manual});
+function updateReverseTarget(id, update) {
+  const favorite = favoriteById(id);
+  if (favorite) {
+    update(favorite, 'favorite');
+    writeSharedState();
+    return { kind: 'favorite', item: favorite };
   }
-  if (!item || item.folder !== "pending" || !item.autoEnabled || item.reverseStatus !== "processing") return res.status(409).json({error:"Item is not processing in the queue"});
-  const prompt = String(req.body?.prompt || "").trim();
+  const list = readWordIndex();
+  const manual = list.find(item => String(item.id) === String(id));
+  if (!manual) return null;
+  update(manual, 'worded');
+  saveWordIndex(list);
+  return { kind: 'worded', item: manual };
+}
+async function finishDirectRequest(itemId, status, error = '') {
+  return mutateDirectRequests(list => {
+    const request = activeDirectRequestIn(list, itemId);
+    if (!request) return null;
+    request.status = status;
+    request.error = String(error || '').slice(0, 1000);
+    if (status === 'processing') request.startedAt = new Date().toISOString();
+    else request.completedAt = new Date().toISOString();
+    return request;
+  });
+}
+app.post("/api/reverse/:id/direct", async (req, res) => {
+  const target = findReverseTarget(req.params.id, true);
+  if (!target) return res.status(404).json({ error: '图片不在待反推区' });
+  const item = target.item;
+  const cached = target.kind === 'favorite'
+    ? hasUsableCache(item)
+    : Boolean(item.imageExt && fs.existsSync(path.join(WORDED_IMAGE_DIR, `${item.id}.${item.imageExt}`)));
+  if (!cached) return res.status(409).json({ error: '高清缓存尚未完成，缓存完成后才能直推' });
+
+  const requestedSessionId = String(req.body?.targetSessionId || directTargetSessionId || '').trim();
+  let outcome;
+  try {
+    outcome = await mutateDirectRequests(list => {
+      const existing = activeDirectRequestIn(list, item.id);
+      if (existing) return { request: existing, reused: true };
+      const session = chooseDirectMcpSession(requestedSessionId);
+      if (!session) {
+        const error = new Error(requestedSessionId ? '指定的 MCP Agent 已离线，请刷新连接后重试' : '没有在线的 MCP Agent，请先连接 DSH 的 DFlow MCP');
+        error.statusCode = 409;
+        throw error;
+      }
+      const request = {
+        id: crypto.randomUUID(), itemId: String(item.id), kind: target.kind,
+        createdAt: new Date().toISOString(), status: 'queued', targetSessionId: session.id,
+        sessionId: '', agentName: session.name, error: '', startedAt: '', completedAt: '',
+        dshDispatch: { status: 'pending', sessionId: '', title: '', sentAt: '', error: '' }
+      };
+      updateReverseTarget(item.id, current => {
+        current.directRequestId = request.id;
+        current.directStatus = 'queued';
+        current.reverseStatus = 'direct-queued';
+        current.reverseError = '';
+      });
+      list.push(request);
+      return { request, reused: false };
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ error: error.message || '创建直推请求失败' });
+  }
+
+  const request = outcome.request;
+  if (!request) return res.status(500).json({ error: '服务未创建直推请求' });
+  const updated = findReverseTarget(item.id, false);
+  // A second click on an existing queued request is intentionally a wake-up,
+  // not a second queue entry.
+  if (request.status === 'queued') void dispatchDirectRequest(request.id).catch(error => console.error('DFlow 直推自动唤起失败:', error));
+  res.status(outcome.reused ? 200 : 202).json({ request, item: directTargetPayload(updated) });
+});
+app.get("/api/reverse/direct/:requestId", (req, res) => {
+  const request = readDirectRequests().find(entry => String(entry.id) === String(req.params.requestId));
+  if (!request) return res.status(404).json({ error: '直推请求不存在' });
+  const target = findReverseTarget(request.itemId, false);
+  res.json({ request, item: directTargetPayload(target) });
+});
+app.get("/api/reverse/direct", (_req, res) => {
+  res.json(readDirectRequests().slice().reverse().slice(0, 200));
+});
+app.post("/api/reverse/direct/:requestId/dispatch", async (req, res) => {
+  const result = await dispatchDirectRequest(req.params.requestId);
+  if (!result.request) return res.status(404).json({ error: result.error || '直推请求不存在' });
+  const target = findReverseTarget(result.request.itemId, false);
+  res.status(result.ok ? 202 : 503).json({ ok: result.ok, error: result.error || '', request: result.request, item: directTargetPayload(target) });
+});
+app.post("/api/reverse/direct/claim", async (req, res) => {
+  const sessionId = String(req.get('X-DFlow-MCP-Session') || '').trim();
+  const session = directSessionById(sessionId);
+  if (!session) return res.status(401).json({ error: 'MCP 会话无效或已离线，请重新连接 DFlow MCP' });
+  session.seenAt = Date.now();
+  const requestId = String(req.body?.requestId || '').trim();
+  const result = await mutateDirectRequests(list => {
+    const eligible = list
+      .filter(entry => {
+        if (entry.status !== 'queued') return false;
+        if (!entry.targetSessionId || String(entry.targetSessionId) === String(session.id)) return true;
+        // If the originally pinned MCP process disappeared and reconnected,
+        // let the current live DSH MCP reclaim the task instead of leaving it
+        // permanently invisible behind a dead session ID.
+        return !directSessionById(entry.targetSessionId);
+      })
+      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+    let request = requestId ? eligible.find(entry => String(entry.id) === requestId) : eligible[0];
+    // A DSH chat can retain a previous wake-up message after DFlow has been
+    // restarted. If that ID is no longer in persistence, claim the oldest
+    // queued task for this live MCP session instead of silently doing nothing.
+    const requestedIdExists = requestId ? list.some(entry => String(entry.id) === requestId) : false;
+    if (!request && requestId && !requestedIdExists) request = eligible[0];
+    if (!request) return { request: null, item: null, requestIdMissing: Boolean(requestId && !requestedIdExists) };
+    const target = findReverseTarget(request.itemId, true);
+    if (!target) {
+      request.status = 'failed'; request.error = '待反推图片已不存在'; request.completedAt = new Date().toISOString();
+      return { gone: true, error: request.error, request };
+    }
+    request.status = 'processing'; request.targetSessionId = session.id; request.sessionId = session.id; request.agentName = session.name; request.startedAt = new Date().toISOString();
+    updateReverseTarget(request.itemId, item => {
+      item.reverseStatus = 'processing'; item.reverseError = ''; item.reverseStartedAt = request.startedAt;
+      item.directStatus = 'processing';
+    });
+    return { request, item: target };
+  });
+  if (result.gone) return res.status(410).json({ error: result.error, request: result.request });
+  if (!result.request) return res.json({ request: null, item: null });
+  const updated = findReverseTarget(result.request.itemId, false);
+  res.json({ request: result.request, item: directTargetPayload(updated) });
+});
+app.post("/api/reverse/direct/:requestId/cancel", async (req, res) => {
+  const result = await mutateDirectRequests(list => {
+    const request = list.find(entry => String(entry.id) === String(req.params.requestId));
+    if (!request) return { missing: true };
+    if (!['queued', 'processing'].includes(request.status)) return { request };
+    request.status = 'cancelled'; request.completedAt = new Date().toISOString(); request.error = '用户取消直推';
+    updateReverseTarget(request.itemId, item => {
+      item.directRequestId = '';
+      item.directStatus = '';
+      item.reverseStatus = 'idle';
+      item.reverseError = '';
+      item.reverseStartedAt = '';
+    });
+    return { request };
+  });
+  if (result.missing) return res.status(404).json({ error: '直推请求不存在' });
+  res.json({ request: result.request, item: directTargetPayload(findReverseTarget(result.request.itemId, false)) });
+});
+
+app.post("/api/reverse/:id/result", async (req, res) => {
+  const id = String(req.params.id);
+  const direct = activeDirectRequest(id);
+  const item = favoriteById(id);
+  if (!item) {
+    const list = readWordIndex();
+    const manual = list.find(x => String(x.id) === id);
+    if (!manual || manual.folder !== 'pending' || (!direct && manual.reverseStatus !== 'processing') || (direct && direct.status !== 'processing')) {
+      return res.status(409).json({error:'Item is not processing in the queue'});
+    }
+    const prompt = String(req.body?.prompt || '').trim();
+    const preset = String(req.body?.resolvedPreset || chosenExpansion(manual.preset));
+    if (!expansionNames().includes(preset) || (manual.preset !== '随机' && preset !== chosenExpansion(manual.preset))) return res.status(400).json({error:'Preset mismatch'});
+    const minimum = preset === '瑶光真人' ? 45 : 250;
+    if (prompt.length < minimum) return res.status(422).json({error:'Prompt too short'});
+    manual.positive = prompt.slice(0, 100000);
+    manual.folder = 'worded';
+    manual.promptWrittenAt = new Date().toISOString();
+    manual.wordedAt = manual.promptWrittenAt;
+    manual.autoEnabled = false;
+    manual.queueOrder = 0;
+    manual.reverseStatus = 'success';
+    manual.reverseError = '';
+    if (direct) {
+      manual.directStatus = 'completed';
+      manual.directRequestId = '';
+      await finishDirectRequest(id, 'completed');
+    }
+    saveWordIndex(list);
+    renumberAllPendingQueue();
+    return res.json({ok:true,item:readWordIndex().find(entry=>entry.id===manual.id)||manual});
+  }
+
+  const isDirect = Boolean(direct && direct.status === 'processing');
+  const normalQueueItem = item.folder === 'pending' && item.autoEnabled && item.reverseStatus === 'processing';
+  const directQueueItem = item.folder === 'pending' && item.reverseStatus === 'processing';
+  if (!item || !directQueueItem || (!isDirect && !normalQueueItem)) return res.status(409).json({error:"Item is not processing in the queue"});
+
+  const prompt = String(req.body?.prompt || '').trim();
   const preset = String(req.body?.resolvedPreset || item.preset);
   if (!expansionNames().includes(preset) || (item.preset !== "随机" && preset !== item.preset)) return res.status(400).json({error:"Preset mismatch"});
   const minimum = preset === "瑶光真人" ? 45 : 250;
   if (prompt.length < minimum) return res.status(422).json({error:`Prompt too short (minimum ${minimum} characters)`});
-  item.prompt = prompt.slice(0, 100000); item.resolvedPreset = preset;
-  item.promptWrittenAt = new Date().toISOString(); item.wordedAt = item.promptWrittenAt;
-  moveCache(item, "worded"); item.folder = "worded";
-  item.reverseStatus = "success"; item.reverseError = ""; item.reverseStartedAt = ""; item.autoEnabled = false;
-  renumberReverseQueue();
+  item.prompt = prompt.slice(0, 100000);
+  item.resolvedPreset = preset;
+  item.promptWrittenAt = new Date().toISOString();
+  item.wordedAt = item.promptWrittenAt;
+  moveCache(item, "worded");
+  item.folder = "worded";
+  item.reverseStatus = "success";
+  item.reverseError = "";
+  item.reverseStartedAt = "";
+  item.autoEnabled = false;
+  item.queueOrder = 0;
+  if (isDirect) {
+    item.directStatus = 'completed';
+    item.directRequestId = '';
+    await finishDirectRequest(id, 'completed');
+  }
+  renumberAllPendingQueue();
   writeSharedState();
   res.json({ok:true, favorite:item});
 });
-app.post("/api/reverse/:id/fail", (req, res) => {
-  const item = favoriteById(req.params.id);
-  if (!item || item.folder !== "pending") {
-    const list=readWordIndex(),manual=list.find(x=>x.id===req.params.id&&x.folder==='pending');
-    if(!manual)return res.status(404).json({error:'Item not pending'});
-    manual.reverseStatus='failed';manual.reverseError=String(req.body?.reason||'Unknown error').slice(0,1000);saveWordIndex(list);return res.json({ok:true,item:manual});
+app.post("/api/reverse/:id/fail", async (req, res) => {
+  const id = String(req.params.id);
+  const direct = activeDirectRequest(id);
+  const item = favoriteById(id);
+  if (!item) {
+    const list = readWordIndex();
+    const manual = list.find(x => String(x.id) === id && x.folder === 'pending');
+    if (!manual) return res.status(404).json({error:'Item not pending'});
+    manual.reverseStatus = 'failed';
+    manual.reverseError = String(req.body?.reason || 'Unknown error').slice(0, 1000);
+    manual.reverseStartedAt = '';
+    if (direct) {
+      manual.directStatus = 'failed';
+      manual.directRequestId = direct.id;
+      await finishDirectRequest(id, 'failed', manual.reverseError);
+    }
+    saveWordIndex(list);
+    return res.json({ok:true,item:manual});
   }
-  item.reverseStatus = "failed"; item.reverseError = String(req.body?.reason || "Unknown error").slice(0,1000); item.reverseStartedAt = "";
+  if (item.folder !== 'pending') return res.status(409).json({error:'Item is not pending'});
+  item.reverseStatus = "failed";
+  item.reverseError = String(req.body?.reason || "Unknown error").slice(0,1000);
+  item.reverseStartedAt = "";
+  if (direct) {
+    item.directStatus = 'failed';
+    item.directRequestId = direct.id;
+    await finishDirectRequest(id, 'failed', item.reverseError);
+  }
   writeSharedState();
   res.json({ok:true, favorite:item});
 });
@@ -891,12 +1540,18 @@ app.put('/api/favorites/:id/image',express.raw({type:['image/png','image/jpeg','
   const webp=body.toString('ascii',0,4)==='RIFF'&&body.toString('ascii',8,12)==='WEBP';
   const ext=png?'png':jpg?'jpg':webp?'webp':'';
   if(!ext)return res.status(415).json({error:'Only PNG, JPEG, WebP supported'});
-  const previous=imagePath(item),dir=item.folder==='completed'?COMPLETED_IMAGE_DIR:item.folder==='worded'?WORDED_IMAGE_DIR:item.folder==='original'?ORIGINAL_IMAGE_DIR:PENDING_IMAGE_DIR;
+  const previous=locateFavoriteCache(item)?.file || imagePath(item),dir=item.folder==='completed'?COMPLETED_IMAGE_DIR:item.folder==='worded'?WORDED_IMAGE_DIR:item.folder==='original'?ORIGINAL_IMAGE_DIR:PENDING_IMAGE_DIR;
   fs.mkdirSync(dir,{recursive:true});
   const filename=`${item.id}.${ext}`,destination=path.join(dir,filename),temp=destination+'.upload';
   try{
     fs.writeFileSync(temp,body);fs.renameSync(temp,destination);
-    if(previous&&previous!==destination)fs.rmSync(previous,{force:true});
+    if(previous&&path.resolve(previous)!==path.resolve(destination))fs.rmSync(previous,{force:true});
+    // Remove a stale duplicate left in another managed folder, but never
+    // remove the newly uploaded destination.
+    for (const managedDir of FAVORITE_CACHE_DIRS) {
+      const duplicate = path.join(managedDir, filename);
+      if (path.resolve(duplicate) !== path.resolve(destination)) fs.rmSync(duplicate, {force:true});
+    }
     item.cacheFile=filename;item.cacheStatus='ready';item.cacheError='';
     item.image_width=Math.max(1,Math.min(20000,Number(req.query.width)||item.image_width));
     item.image_height=Math.max(1,Math.min(20000,Number(req.query.height)||item.image_height));
@@ -905,15 +1560,23 @@ app.put('/api/favorites/:id/image',express.raw({type:['image/png','image/jpeg','
 });
 app.get("/api/reverse/image/:id", (req, res) => {
   const item = favoriteById(req.params.id);
-  const file = item && item.cacheStatus === "ready" ? imagePath(item) : null;
-  if (!file || !fs.existsSync(file)) return res.status(404).send("Cached image not ready");
+  if (item && reconcileFavoriteCache(item)) writeSharedState();
+  if (item?.cacheStatus === "idle") scheduleCache(item.id);
+  const found = item && locateFavoriteCache(item);
+  const file = item && found ? found.file : null;
+  if (!file || !isFile(file)) return res.status(404).send("Cached image not ready");
   res.set("Cache-Control", "private, no-store");
   res.sendFile(file);
 });
 // One-time migration from the old pending cache directory; preserve existing user images.
 for(const item of sharedState.favorites.filter(x=>x.folder==='pending' && x.cacheFile)) {
-  const old=path.join(REVERSE_DIR,'pending',item.cacheFile), dest=imagePath(item);
-  if(fs.existsSync(old) && !fs.existsSync(dest)) { fs.mkdirSync(PENDING_IMAGE_DIR,{recursive:true}); fs.renameSync(old,dest); }
+  const old=path.join(REVERSE_DIR,'pending',item.cacheFile);
+  const dest = /^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif)$/i.test(String(item.cacheFile))
+    ? path.join(PENDING_IMAGE_DIR, item.cacheFile) : null;
+  if(dest && isFile(old) && !isFile(dest)) {
+    try { fs.mkdirSync(PENDING_IMAGE_DIR,{recursive:true}); fs.renameSync(old,dest); }
+    catch (error) { console.error('迁移旧待反推缓存失败：', error.message); }
+  }
 }
 // Existing successful prompts leave the temporary AI queue. Keep a one-time state backup.
 if (sharedState.favorites.some(item => item.folder === "pending" && item.prompt?.trim())) {
@@ -926,11 +1589,11 @@ if (sharedState.favorites.some(item => item.folder === "pending" && item.prompt?
   }
   renumberReverseQueue(); writeSharedState();
 }
+reconcileFavoriteCaches();
 for (const item of sharedState.favorites) {
-  if (!["pending","worded","completed"].includes(item.folder)) continue;
+  if (!["original","pending","worded","completed"].includes(item.folder)) continue;
   if (item.folder === "pending" && item.autoEnabled && item.prompt && item.reverseStatus === "success") item.reverseStatus = "idle";
   if (item.reverseStatus === "processing") { item.reverseStatus = "idle"; item.reverseStartedAt = ""; }
-  if (item.cacheStatus === "ready" && !fs.existsSync(imagePath(item) || "")) { item.cacheStatus = "error"; item.cacheError = "Cached file missing"; }
   if (item.cacheStatus !== "ready" && item.cacheStatus !== "error") scheduleCache(item.id);
 }
 function danbooruHeaders() { return {"User-Agent":"Aaalice-Nodes/1.0", "Accept":"application/json"}; }
@@ -1128,9 +1791,18 @@ app.get("/api/image", async (req, res) => {
 // Pixiv APIs: Rankings and Search
 app.get("/api/pixiv/ranking", async (req, res) => {
   try {
-    const mode = String(req.query.mode || "daily");
+    const allowedModes = new Set(['daily', 'weekly', 'monthly', 'daily_ai', 'daily_r18', 'weekly_r18', 'daily_r18_ai']);
+    const mode = allowedModes.has(String(req.query.mode || '')) ? String(req.query.mode) : 'daily';
     const page = String(Math.max(1, Number(req.query.page) || 1));
-    const url = `https://www.pixiv.net/ranking.php?mode=${encodeURIComponent(mode)}&format=json&p=${page}`;
+    const requestedDate = String(req.query.date || '').trim();
+    const validDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) && !Number.isNaN(Date.parse(`${requestedDate}T00:00:00Z`));
+    const today = new Date().toISOString().slice(0, 10);
+    if (validDate && requestedDate > today) return res.status(400).json({ error: 'Pixiv 榜单日期不能晚于今天' });
+    const url = new URL('https://www.pixiv.net/ranking.php');
+    url.searchParams.set('mode', mode);
+    url.searchParams.set('format', 'json');
+    url.searchParams.set('p', page);
+    if (validDate) url.searchParams.set('date', requestedDate.replaceAll('-', ''));
     const headers = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       "Referer": "https://www.pixiv.net/",
@@ -1139,13 +1811,34 @@ app.get("/api/pixiv/ranking", async (req, res) => {
     if (sharedState.account.pixivCookie) {
       headers["Cookie"] = sharedState.account.pixivCookie;
     }
-    const response = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
+    let response = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
+    // Pixiv may publish the current day's board a little later than the
+    // local clock. A fresh page request for today can therefore be 404 even
+    // though yesterday's board is available. Use the newest available board
+    // in that one case and tell the client which date it actually received.
+    if (response.status === 404 && Number(page) === 1 && validDate && requestedDate === today) {
+      const fallback = new Date(`${requestedDate}T00:00:00Z`);
+      fallback.setUTCDate(fallback.getUTCDate() - 1);
+      const fallbackDate = fallback.toISOString().slice(0, 10);
+      url.searchParams.set('date', fallbackDate.replaceAll('-', ''));
+      const fallbackResponse = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
+      if (fallbackResponse.ok) {
+        response = fallbackResponse;
+        res.set('X-Pixiv-Effective-Date', fallbackDate);
+      }
+    }
     if (response.status === 404 && Number(page) > 1) {
       // Pixiv returns HTTP 404 after the last ranking page, not an empty JSON list.
       res.set("X-Pixiv-Has-More", "false");
       return res.json([]);
     }
     if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        const hint = mode.includes('_r18')
+          ? 'Pixiv R18 榜单需要有效的 PHPSESSID，请在“登录 Pflow”中填写 Pixiv Cookie。'
+          : 'Pixiv 拒绝了请求，请检查登录 Cookie 或稍后重试。';
+        return res.status(response.status).json({ error: hint, detail: `Pixiv ranking HTTP ${response.status}` });
+      }
       return res.status(response.status).json({ error: `Pixiv ranking HTTP ${response.status}` });
     }
     const data = await response.json();
@@ -1190,7 +1883,8 @@ app.get("/api/pixiv/search", async (req, res) => {
     const word = String(req.query.word || "").trim();
     if (!word) return res.json([]);
     const page = String(Math.max(1, Number(req.query.page) || 1));
-    const url = `https://www.pixiv.net/ajax/search/artworks/${encodeURIComponent(word)}?word=${encodeURIComponent(word)}&order=date_d&mode=all&p=${page}&s_mode=s_tag_full&type=all`;
+    const rating = String(req.query.rating || 'safe') === 'r18' ? 'r18' : 'all';
+    const url = `https://www.pixiv.net/ajax/search/artworks/${encodeURIComponent(word)}?word=${encodeURIComponent(word)}&order=date_d&mode=${rating}&p=${page}&s_mode=s_tag_full&type=all`;
     const headers = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       "Referer": "https://www.pixiv.net/",
@@ -1201,6 +1895,12 @@ app.get("/api/pixiv/search", async (req, res) => {
     }
     const response = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
     if (!response.ok) {
+      if ((response.status === 401 || response.status === 403) && rating === 'r18') {
+        return res.status(response.status).json({
+          error: 'Pixiv R18 搜索需要有效的 PHPSESSID，请在“登录 Pflow”中填写 Pixiv Cookie。',
+          detail: `Pixiv 搜索 HTTP ${response.status}`
+        });
+      }
       return res.status(response.status).json({ error: `Pixiv 搜索 HTTP ${response.status}` });
     }
     const data = await response.json();
@@ -1260,6 +1960,123 @@ function readWordIndex() {
   } catch { return []; }
 }
 function saveWordIndex(list) { fs.mkdirSync(WORDED_IMAGE_DIR,{recursive:true});fs.writeFileSync(WORD_INDEX,JSON.stringify(list,null,2)); }
+function renumberWordedQueue(list) {
+  const queued = list.map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.folder === 'pending' && item.autoEnabled !== false);
+  queued.sort((a, b) =>
+    (Number(a.item.queueOrder) || Infinity) - (Number(b.item.queueOrder) || Infinity) ||
+    a.index - b.index
+  );
+  queued.forEach(({ item }, index) => { item.queueOrder = index + 1; });
+  list.filter(item => item.folder !== 'pending' || item.autoEnabled === false)
+    .forEach(item => { item.queueOrder = 0; });
+}
+function nextWordedOrder(list) {
+  let maximum = Math.max(0, ...list.map(item =>
+    item.folder === 'pending' && item.autoEnabled !== false ? (safeQueueOrder(item.queueOrder) || 0) : 0
+  ));
+  maximum = Math.max(maximum, ...sharedState.favorites.map(item =>
+    item.folder === 'pending' && item.autoEnabled !== false ? (safeQueueOrder(item.queueOrder) || 0) : 0
+  ));
+  return maximum + 1;
+}
+// Favorites and hand-written/metadata cards share the same pending queue.  A
+// previous implementation renumbered them separately, so moving a card
+// between collections could produce gaps, duplicates, or a timestamp-like
+// number.  Keep one authoritative, contiguous sequence for every queued card.
+function renumberAllPendingQueue() {
+  const worded = readWordIndex();
+  const items = [];
+  let sequence = 0;
+  for (const item of sharedState.favorites) {
+    if (item.folder === 'pending' && item.autoEnabled !== false) {
+      items.push({ kind: 'favorite', item, sequence: sequence++ });
+    }
+  }
+  for (const item of worded) {
+    if (item.folder === 'pending' && item.autoEnabled !== false) {
+      items.push({ kind: 'worded', item, sequence: sequence++ });
+    }
+  }
+  items.sort((a, b) =>
+    (safeQueueOrder(a.item.queueOrder) ?? Infinity) - (safeQueueOrder(b.item.queueOrder) ?? Infinity) ||
+    a.sequence - b.sequence
+  );
+
+  let changed = false;
+  const activeFavorites = new Set();
+  const activeWorded = new Set();
+  items.forEach(({ kind, item }, index) => {
+    const order = index + 1;
+    if (item.queueOrder !== order) {
+      item.queueOrder = order;
+      changed = true;
+    }
+    (kind === 'favorite' ? activeFavorites : activeWorded).add(String(item.id));
+  });
+  for (const item of sharedState.favorites) {
+    if (!activeFavorites.has(String(item.id)) && item.queueOrder !== 0) {
+      item.queueOrder = 0;
+      changed = true;
+    }
+  }
+  for (const item of worded) {
+    if (!activeWorded.has(String(item.id)) && item.queueOrder !== 0) {
+      item.queueOrder = 0;
+      changed = true;
+    }
+  }
+  if (changed) {
+    writeSharedState();
+    saveWordIndex(worded);
+  }
+  return { items, worded, changed };
+}
+function recoverDirectRequests() {
+  const requests = readDirectRequests();
+  if (!requests.length) return;
+  let requestsChanged = false;
+  let stateChanged = false;
+  for (const request of requests) {
+    if (!['queued', 'processing'].includes(request.status)) continue;
+    const target = findReverseTarget(request.itemId, true);
+    if (!target) {
+      request.status = 'failed';
+      request.error = '服务重启后待反推图片已不存在';
+      request.completedAt = new Date().toISOString();
+      requestsChanged = true;
+      continue;
+    }
+    // Session IDs are process-local. After a restart an old target cannot be
+    // trusted; let the next connected MCP Agent claim the request.
+    if (request.targetSessionId || request.sessionId) {
+      request.targetSessionId = '';
+      request.sessionId = '';
+      requestsChanged = true;
+    }
+    if (request.status === 'processing') {
+      request.status = 'queued';
+      request.startedAt = '';
+      requestsChanged = true;
+    }
+    if (request.dshDispatch?.status === 'dispatching') {
+      request.dshDispatch = { status: 'pending', sessionId: '', title: '', sentAt: '', error: '' };
+      requestsChanged = true;
+    }
+    updateReverseTarget(request.itemId, item => {
+      if (item.directRequestId !== request.id || item.directStatus !== 'queued' || item.reverseStatus !== 'direct-queued') {
+        item.directRequestId = request.id;
+        item.directStatus = 'queued';
+        item.reverseStatus = 'direct-queued';
+        item.reverseStartedAt = '';
+        item.reverseError = '';
+        stateChanged = true;
+      }
+    });
+  }
+  if (requestsChanged) writeDirectRequests(requests);
+  if (stateChanged) writeSharedState();
+}
 // Migrate earlier hand-written cards, retaining an untouched copy of the old metadata index.
 const oldManual = readMetaIndex().filter(item => item.source === '手写');
 if (oldManual.length) {
@@ -1276,33 +2093,78 @@ if (oldManual.length) {
   saveMetaIndex(readMetaIndex().filter(item => item.source !== '手写'));
 }
 ensurePromptWrittenTimes();
+// Repair legacy queue values once the worded index is available, including
+// timestamp values written by older builds.
+renumberAllPendingQueue();
+recoverDirectRequests();
 app.get('/api/metadata/images',(_req,res)=>res.json(readMetaIndex()));
-app.get('/api/worded/entries',(_req,res)=>res.json(readWordIndex()));
+app.get('/api/worded/entries',(_req,res)=>{ renumberAllPendingQueue(); res.json(readWordIndex()); });
 app.patch('/api/worded/entries/:id',(req,res)=>{
   const list=readWordIndex(),item=list.find(x=>x.id===req.params.id);
   if(!item)return res.status(404).json({error:'有词卡片不存在'});
   const prompt=req.body?.prompt;
   if(typeof prompt!=='string'||!prompt.trim()||prompt.length>100000)return res.status(400).json({error:'提示词不能为空或超过 100000 字符'});
-  item.positive=prompt.trim();item.promptWrittenAt=new Date().toISOString();item.wordedAt=item.promptWrittenAt;if(item.folder==='pending'){item.folder='worded';item.autoEnabled=false;item.queueOrder=0;item.reverseStatus='success';}saveWordIndex(list);res.json(item);
+  item.positive=prompt.trim();item.promptWrittenAt=new Date().toISOString();item.wordedAt=item.promptWrittenAt;if(item.folder==='pending'){item.folder='worded';item.autoEnabled=false;item.queueOrder=0;item.reverseStatus='success';}renumberWordedQueue(list);saveWordIndex(list);renumberAllPendingQueue();res.json(readWordIndex().find(entry=>entry.id===item.id)||item);
 });
 app.patch('/api/worded/state/:id',(req,res)=>{
   const list=readWordIndex(), item=list.find(x=>x.id===req.params.id);
   if(!item)return res.status(404).json({error:'有词卡片不存在'});
-  const folder=req.body?.folder ?? item.folder;
+  const body=req.body || {};
+  const folder=body.folder ?? item.folder;
   if(!['worded','pending','completed'].includes(folder))return res.status(400).json({error:'无效目录'});
   if(folder==='pending'&&!item.imageExt)return res.status(409).json({error:'请先在提示词窗口粘贴图片'});
-  if(req.body?.preset !== undefined && !validExpansion(req.body.preset))return res.status(400).json({error:'无效扩写预设'});
-  if(req.body?.reversePreset !== undefined && !validReverse(req.body.reversePreset))return res.status(400).json({error:'无效反推预设'});
-  if(req.body?.preset !== undefined)item.preset=req.body.preset;
-  if(req.body?.reversePreset !== undefined)item.reversePreset=req.body.reversePreset;
+  if(body.preset !== undefined && !validExpansion(body.preset))return res.status(400).json({error:'无效扩写预设'});
+  if(body.reversePreset !== undefined && !validReverse(body.reversePreset))return res.status(400).json({error:'无效反推预设'});
+
+  if(body.preset !== undefined)item.preset=body.preset;
+  if(body.reversePreset !== undefined)item.reversePreset=body.reversePreset;
+  if(body.customInstruction !== undefined)item.customInstruction=String(body.customInstruction || '').slice(0,4000);
+
   if(folder!==item.folder){
-    item.folder=folder;item.autoEnabled=folder==='pending';
-    item.reverseStatus=folder==='pending'?'idle':'success';
-    item.queueOrder=folder==='pending'?Date.now():0;
+    item.folder=folder;
+    if(folder==='pending'){
+      item.autoEnabled=true;
+      item.reverseStatus='idle';
+      item.reverseError='';
+      item.queueOrder=nextWordedOrder(list);
+    }else{
+      item.autoEnabled=false;
+      item.queueOrder=0;
+      item.reverseStatus='success';
+      if(folder==='completed') item.completedAt=new Date().toISOString();
+    }
     // Moving folders does not rewrite prompt-written time; it is content chronology.
-    if(folder==='completed') item.completedAt=new Date().toISOString();
   }
-  saveWordIndex(list);res.json(item);
+
+  if(typeof body.autoEnabled === 'boolean'){
+    if(folder !== 'pending'){
+      item.autoEnabled=false;
+      item.queueOrder=0;
+    }else if(body.autoEnabled){
+      const wasEnabled=item.autoEnabled === true;
+      if(!wasEnabled || !Number(item.queueOrder)) item.queueOrder=nextWordedOrder(list);
+      item.autoEnabled=true;
+      // Re-adding a card is an explicit request to run the full workflow again.
+      if(!wasEnabled || body.retryReverse){
+        item.reverseStatus='idle';
+        item.reverseError='';
+      }
+    }else{
+      item.autoEnabled=false;
+      item.queueOrder=0;
+    }
+  }
+  if(body.retryReverse){
+    if(folder!=='pending')return res.status(400).json({error:'只有待反推区的卡片可以重新反推'});
+    item.autoEnabled=true;
+    item.queueOrder=nextWordedOrder(list);
+    item.reverseStatus='idle';
+    item.reverseError='';
+  }
+  renumberWordedQueue(list);
+  saveWordIndex(list);
+  renumberAllPendingQueue();
+  res.json({ok:true,entry:readWordIndex().find(entry=>entry.id===item.id)||item});
 });
 app.post('/api/worded/entries',(req,res)=>{
   const positive=String(req.body?.prompt||'').trim().slice(0,100000);
@@ -1381,9 +2243,3 @@ app.delete('/api/metadata/images/:id',(req,res)=>{
 app.use("/api", (_req, res) => res.status(404).json({ok:false, error:"接口不存在，请确认已重启到最新版 DFlow 服务"}));
 app.use((_req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 app.listen(PORT, HOST, () => console.log(`DFlow 已启动：http://${HOST}:${PORT}`));
-
-
-
-
-
-

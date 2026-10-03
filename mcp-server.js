@@ -17,7 +17,9 @@ const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 async function api(route, options = {}) {
   let response;
-  try { response = await fetch(base + route, { ...options, signal: AbortSignal.timeout(30000) }); }
+  const headers = new Headers(options.headers || {});
+  if (sessionId) headers.set('X-DFlow-MCP-Session', sessionId);
+  try { response = await fetch(base + route, { ...options, headers, signal: AbortSignal.timeout(30000) }); }
   catch (error) { throw Error(`无法连接本机 DFlow (${base})：请先启动 npm start。${error.message}`); }
   if (!response.ok) {
     const body = await response.text();
@@ -75,7 +77,7 @@ tool('get_reverse_workflow', '读取完整两阶段反推流程和当前卡片�
   return text(await workflow(item));
 });
 server.registerPrompt('dflow_reverse', { description:'DFlow 待反推队列的两阶段反推扩写工作流（先反推预设，再扩写预设）' }, async () => ({
-  messages:[{role:'user',content:{type:'text',text:'先 list_pending 汇报总数及可处理数，等待用户确认；然后逐张 claim_next_pending，按返回的完整两阶段流程先读图反推，再执行扩写，成功 complete_pending，失败 fail_pending。不要把完整提示词输出到聊天。'}}]
+  messages:[{role:'user',content:{type:'text',text:'立即开始处理，不要先等待用户确认。先调用 list_pending 了解队列；随后逐张 claim_next_pending（若存在网页 AI直推请求，优先领取它）。每张图都必须读取缓存高清图，先完整执行反推预设，再完整执行扩写预设，最后成功调用 complete_pending，失败调用 fail_pending。聊天只汇报“开始第几张、成功或失败及原因”，不要输出完整提示词正文。'}}]
 }));
 
 // Read-only queue operations use only locally cached images; no Danbooru/Pixiv requests.
@@ -92,7 +94,26 @@ tool('read_pending_image', '读取待反推区某张已缓存的高清图，返�
   if (!Object.values(mime).includes(type) || bytes.length < 24) throw Error('缓存响应不是有效的图片');
   return { content: [{ type: 'text', text: JSON.stringify({ id, preset: item.preset, reversePreset:item.reversePreset, customInstruction: item.customInstruction, queueOrder: item.queueOrder }) }, { type: 'image', data: bytes.toString('base64'), mimeType: type }] };
 });
-tool('claim_next_pending', '领取下一张已缓存图片，返回反推与扩写两阶段完整预设正文。领取后读图，必须 complete_pending 或 fail_pending。', {}, async () => {
+async function claimDirectReverse(requestId = '') {
+  const result = await json('/api/reverse/direct/claim', 'POST', requestId ? { requestId } : {});
+  // DSH can deliver a retained wake-up message after DFlow was restarted.
+  // The server normally performs this fallback itself; keep one client-side
+  // retry as well for older servers and transient queue races.
+  if (!result.request && requestId && result.requestIdMissing) {
+    const fallback = await json('/api/reverse/direct/claim', 'POST', {});
+    if (!fallback.request) return fallback;
+    return { ...fallback, fallbackFromRequestId: requestId, workflow: await workflow(fallback.item) };
+  }
+  if (!result.request) return result;
+  return { ...result, workflow: await workflow(result.item) };
+}
+tool('claim_direct_reverse', '从平板发起的“AI直推”请求中领取一张图片，并返回完整的先反推后扩写流程。完成后必须调用 complete_pending，失败必须调用 fail_pending；聊天只报告开始、成功或失败原因，不输出完整提示词正文。', { requestId: z.string().optional() }, async ({ requestId = '' }) => {
+  try { return text(await claimDirectReverse(requestId)); }
+  catch (error) { return { isError: true, content: [{ type: 'text', text: error.message || String(error) }] }; }
+});
+tool('claim_next_pending', '优先领取平板发起的 AI 直推请求；没有直推请求时再领取普通待反推队列。返回反推与扩写两阶段完整预设正文。领取后读图，必须 complete_pending 或 fail_pending。', {}, async () => {
+  const direct = await claimDirectReverse();
+  if (direct.request) return text(direct);
   const result=await json('/api/reverse/next','POST');
   if (!result.item) return text(result);
   try { return text({...result,workflow:await workflow(result.item)}); }
@@ -134,8 +155,12 @@ tool('import_metadata_png', '导入本地原始 ComfyUI PNG 至元数据库，�
 
 // Stdio is one client per process. Register before connect: the SDK emits
 // `initialized` during connect, so assigning this callback afterwards loses it.
-async function registerSession() {
-  if (sessionId) return;
+async function registerSession(force = false) {
+  if (sessionId && !force) return;
+  // A DFlow server restart invalidates the old in-memory session. Clear it
+  // before calling json(), otherwise the registration request would carry the
+  // stale X-DFlow-MCP-Session header and never recover.
+  sessionId = null;
   try {
     const client=server.server.getClientVersion();
     const result=await json('/api/mcp/sessions','POST',{name:client?.name || process.env.DFLOW_AGENT_NAME || '未知 Agent',version:client?.version || ''});
@@ -145,10 +170,16 @@ async function registerSession() {
 server.server.oninitialized = registerSession;
 await server.connect(new StdioServerTransport());
 const heartbeat=setInterval(async()=>{
-  if (!sessionId) return;
+  if (!sessionId) { await registerSession(true); return; }
   try {
-    const response=await fetch(base+`/api/mcp/sessions/${encodeURIComponent(sessionId)}/heartbeat`, {method:'POST',signal:AbortSignal.timeout(5000)});
-    if (response.status === 410) { console.error('DFlow MCP 会话已由设置页面断开'); await server.close(); process.exit(0); }
-  } catch { /* DFlow may be restarting. The next heartbeat will retry. */ }
+    const response=await fetch(base+`/api/mcp/sessions/${encodeURIComponent(sessionId)}/heartbeat`, {method:'POST',headers:{'X-DFlow-MCP-Session':sessionId},signal:AbortSignal.timeout(5000)});
+    if (response.status === 410 || !response.ok) {
+      await registerSession(true);
+    }
+  } catch {
+    // DFlow may be restarting. Drop the stale ID so the next heartbeat can
+    // register a fresh session as soon as the local server is back.
+    sessionId = null;
+  }
 }, 5000);
 heartbeat.unref();

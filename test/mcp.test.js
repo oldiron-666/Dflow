@@ -20,7 +20,7 @@ function metadataPng() {
 test('stdio MCP end-to-end on isolated DFlow data', { timeout: 60000 }, async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'dflow-mcp-'));
   const port = 30000 + Math.floor(Math.random() * 20000);
-  const service = spawn(process.execPath, ['server.js'], { cwd: root, env: { ...process.env, DFLOW_DATA_DIR: path.join(temp, 'data'), PORT: String(port), HOST: '127.0.0.1' }, stdio: 'ignore' });
+  const service = spawn(process.execPath, ['server.js'], { cwd: root, env: { ...process.env, DFLOW_DATA_DIR: path.join(temp, 'data'), DFLOW_DSH_BRIDGE_ENDPOINT: path.join(temp, 'missing-dsh-endpoint.json'), DFLOW_DSH_SESSION_ID: '', PORT: String(port), HOST: '127.0.0.1' }, stdio: 'ignore' });
   let client;
   try {
     let up = false;
@@ -35,7 +35,7 @@ test('stdio MCP end-to-end on isolated DFlow data', { timeout: 60000 }, async ()
     client = new Client({ name: 'dflow-test', version: '0.1' });
     await client.connect(transport);
     const tools = await client.listTools();
-    assert.deepEqual(tools.tools.map(x => x.name).sort(), ['claim_next_pending','complete_pending','create_worded_card','fail_pending','get_reverse_workflow','import_metadata_png','list_pending','read_pending_image']);
+    assert.deepEqual(tools.tools.map(x => x.name).sort(), ['claim_direct_reverse','claim_next_pending','complete_pending','create_worded_card','fail_pending','get_reverse_workflow','import_metadata_png','list_pending','read_pending_image']);
     const call = (name, args = {}) => client.callTool({ name, arguments: args });
     const body = result => JSON.parse(result.content[0].text);
     assert.equal(body(await call('list_pending')).total, 0);
@@ -83,6 +83,45 @@ test('stdio MCP end-to-end on isolated DFlow data', { timeout: 60000 }, async ()
     const completed = body(await call('complete_pending', { id: card.id, prompt, resolvedPreset: '自定义扩写' }));
     assert.equal(completed.item.folder, 'worded');
     assert.equal(body(await call('list_pending')).total, 0);
+
+    // A tablet-originated direct request is pinned to the selected MCP session.
+    const targetUpdate = await fetch(`http://127.0.0.1:${port}/api/mcp/direct-target`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sessions[0].id }) });
+    assert.equal(targetUpdate.status, 200);
+    const targetState = await (await fetch(`http://127.0.0.1:${port}/api/mcp/direct-target`)).json();
+    assert.equal(targetState.sessionId, sessions[0].id);
+    const directCard = body(await call('create_worded_card', { prompt: 'old prompt that will be replaced', imagePath }));
+    const directMove = await fetch(`http://127.0.0.1:${port}/api/worded/state/${directCard.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder: 'pending' }) });
+    assert.equal(directMove.status, 200);
+    const directResponse = await fetch(`http://127.0.0.1:${port}/api/reverse/${directCard.id}/direct`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+    assert.equal(directResponse.status, 202);
+    const directRequest = await directResponse.json();
+    assert.equal(directRequest.request.status, 'queued');
+    const directClaim = body(await call('claim_direct_reverse'));
+    assert.equal(directClaim.request.id, directRequest.request.id);
+    assert.equal(directClaim.request.status, 'processing');
+    const directCompleted = body(await call('complete_pending', { id: directCard.id, prompt: prompt, resolvedPreset: '通用扩写' }));
+    assert.equal(directCompleted.item.folder, 'worded');
+    const directState = await (await fetch(`http://127.0.0.1:${port}/api/reverse/direct/${directRequest.request.id}`)).json();
+    assert.equal(directState.request.status, 'completed');
+
+    // Concurrent clicks must reuse one persisted request instead of allowing a
+    // stale read/modify/write to erase or duplicate the queue entry.
+    const concurrentCard = body(await call('create_worded_card', { prompt: 'concurrent direct card', imagePath }));
+    const concurrentMove = await fetch(`http://127.0.0.1:${port}/api/worded/state/${concurrentCard.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder: 'pending' }) });
+    assert.equal(concurrentMove.status, 200);
+    const concurrentResponses = await Promise.all(Array.from({ length: 4 }, () => fetch(`http://127.0.0.1:${port}/api/reverse/${concurrentCard.id}/direct`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })));
+    assert.ok(concurrentResponses.every(response => response.ok));
+    const concurrentBodies = await Promise.all(concurrentResponses.map(response => response.json()));
+    assert.equal(new Set(concurrentBodies.map(result => result.request.id)).size, 1);
+    const queued = (await (await fetch(`http://127.0.0.1:${port}/api/reverse/direct`)).json()).filter(entry => entry.itemId === concurrentCard.id && ['queued', 'processing'].includes(entry.status));
+    assert.equal(queued.length, 1);
+    const staleClaim = body(await call('claim_direct_reverse', { requestId: '00000000-0000-4000-8000-000000000404' }));
+    assert.equal(staleClaim.request.id, concurrentBodies[0].request.id);
+    const concurrentCompleted = body(await call('complete_pending', { id: concurrentCard.id, prompt, resolvedPreset: '通用扩写' }));
+    assert.equal(concurrentCompleted.item.folder, 'worded');
+
+    const clearTarget = await fetch(`http://127.0.0.1:${port}/api/mcp/direct-target`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: '' }) });
+    assert.equal(clearTarget.status, 200);
     const disconnect=await fetch(`http://127.0.0.1:${port}/api/mcp/sessions/${sessions[0].id}`,{method:'DELETE'});
     assert.equal(disconnect.status,200);
     assert.equal((await (await fetch(`http://127.0.0.1:${port}/api/mcp/sessions`)).json()).length,0);
@@ -93,4 +132,3 @@ test('stdio MCP end-to-end on isolated DFlow data', { timeout: 60000 }, async ()
     await fs.rm(temp, { recursive: true, force: true });
   }
 });
-
