@@ -108,6 +108,9 @@ let currentPosts = [];
 const viewCache = new Map();
 const undoStack = [];
 let undoing = false;
+let shareSelectionMode = false;
+const selectedShareKeys = new Set();
+let pendingShareImport = null;
 
 const fallbackTags = [
   ['单人','solo'],['双人','2girls'],['多人','multiple_girls'],['看向观众','looking_at_viewer'],['微笑','smile'],['张嘴','open_mouth'],
@@ -254,6 +257,12 @@ async function requestPosts(url, signal) {
     if (response.ok) {
       const posts = await response.json();
       if (!Array.isArray(posts)) throw Error('图片接口返回格式错误：预期图片列表');
+      const effectiveDate = response.headers.get('X-Danbooru-Effective-Date');
+      const fallbackKind = response.headers.get('X-Danbooru-Fallback');
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(effectiveDate || ''))) {
+        Object.defineProperty(posts, 'effectiveDate', { value: effectiveDate, enumerable: false, configurable: true });
+      }
+      if (fallbackKind) Object.defineProperty(posts, 'fallbackKind', { value: fallbackKind, enumerable: false, configurable: true });
       if (url.startsWith('/api/pixiv/ranking')) {
         const effectiveDate = response.headers.get('X-Pixiv-Effective-Date');
         if (/^\d{4}-\d{2}-\d{2}$/.test(String(effectiveDate || '')) && isPixivMode(mode)) {
@@ -356,21 +365,483 @@ async function saveFavorites(items) {
     if (revision === favoriteStateRevision) toast(`收藏已保存在本机，局域网同步失败：${error.message}`);
   }
 }
+function inferredShareSource(item, kind = 'favorite') {
+  const raw = String(item?.source || '').trim().toLowerCase();
+  const id = String(item?.id || '');
+  if (raw === 'local' || raw === 'manual' || raw === '手写' || id.startsWith('local_')) return 'local';
+  if (raw === 'pixiv' || id.startsWith('px_')) return 'pixiv';
+  // Standalone worded/hand-written cards live in the local data store and
+  // usually have a UUID without a source field.  Never mislabel them as a
+  // Danbooru post when exporting or importing a share file.
+  if (kind === 'worded' && !item?.sourcePageUrl && !item?.sourceImageUrl && !item?.file_url && !item?.large_file_url) return 'local';
+  return 'danbooru';
+}
+function shareSourceId(item, source = inferredShareSource(item)) {
+  // A local card can carry a stale sourceId after it has been copied between
+  // folders or imported from another device. Its local id is the only stable
+  // identity; never let an old remote sourceId collapse two local cards.
+  if (source === 'local') return String(item?.id || '');
+  if (item?.sourceId) return String(item.sourceId);
+  if (source === 'pixiv') return String(item?.pixiv_id || item?.id || '').replace(/^px_/, '').split('_')[0];
+  return String(item?.id || '');
+}
+function shareIdentity(item, kind = 'favorite') {
+  const source = inferredShareSource(item, kind);
+  return `${source}:${shareSourceId(item, source)}`;
+}
+function findFavoriteForPost(post) {
+  if (!post) return null;
+  const identity = shareIdentity(post, 'favorite');
+  return readFavorites().find(item => shareIdentity(item, 'favorite') === identity) || null;
+}
+function sharePromptFor(kind, item) {
+  return String(kind === 'worded' ? (item?.positive || '') : (item?.prompt || ''));
+}
+function shareFolderFor(kind, item) {
+  return kind === 'worded' ? (item?.folder || 'worded') : postFolder(item);
+}
+function sourcePageUrlFor(item, source = inferredShareSource(item)) {
+  if (item?.sourcePageUrl) return String(item.sourcePageUrl);
+  if (source === 'pixiv') {
+    const id = item?.pixiv_id || String(item?.id || '').replace(/^px_/, '').split('_')[0];
+    return id ? `https://www.pixiv.net/artworks/${encodeURIComponent(id)}` : '';
+  }
+  if (source === 'danbooru' && item?.id !== undefined && /^\d+$/.test(String(item.id))) {
+    return `https://danbooru.donmai.us/posts/${String(item.id)}`;
+  }
+  return '';
+}
 function favoriteFields(post) {
+  const source = inferredShareSource(post);
   return {
-    id: post.id, rating: post.rating,
+    id: post.id, source, sourceId: post.sourceId || shareSourceId(post, source), sourcePageUrl: post.sourcePageUrl || sourcePageUrlFor(post, source),
+    sourceImageUrl: post.sourceImageUrl || post.file_url || post.large_file_url || '', sourcePreviewUrl: post.sourcePreviewUrl || post.preview_file_url || '',
+    rating: post.rating, pixivRating: post.pixivRating || '', pixiv_id: post.pixiv_id || '', page_count: Number(post.page_count) || 1,
+    title: post.title || '', author: post.author || post.user_name || '',
     preview_file_url: post.preview_file_url, large_file_url: post.large_file_url, file_url: post.file_url,
     image_width: post.image_width, image_height: post.image_height,
     tag_string_general: post.tag_string_general || '', tag_string_character: post.tag_string_character || '',
     tag_string_copyright: post.tag_string_copyright || '', created_at: post.created_at || '', completed: Boolean(post.completed),
     folder: postFolder(post), preset: post.preset || presetConfig.defaultExpansion, reversePreset:post.reversePreset || presetConfig.defaultReverse, autoEnabled: post.autoEnabled !== false,
-    promptWrittenAt: post.promptWrittenAt || post.wordedAt || '', wordedAt: post.wordedAt || '', completedAt: post.completedAt || '', createdAt: post.createdAt || post.created_at || '', updatedAt: post.updatedAt || '', source: post.source || '', name: post.name || '',
+    promptWrittenAt: post.promptWrittenAt || post.wordedAt || '', wordedAt: post.wordedAt || '', completedAt: post.completedAt || '', createdAt: post.createdAt || post.created_at || '', updatedAt: post.updatedAt || '', name: post.name || '',
     prompt: post.prompt || '', resolvedPreset: post.resolvedPreset || '', reverseStatus: post.reverseStatus || 'idle',
     reverseError: post.reverseError || '', cacheStatus: post.cacheStatus || 'idle', cacheFile: post.cacheFile || '', cacheError: post.cacheError || ''
   };
 }
-function isFavorite(id) {
-  return readFavorites().some(item => String(item.id) === String(id));
+function safeShareUrl(value) {
+  if (!value) return '';
+  try {
+    const url = new URL(String(value));
+    if (!['http:', 'https:'].includes(url.protocol)) return '';
+    // Share files are portable files, not credential containers. Strip URL
+    // credentials and common auth parameters before writing remote links.
+    url.username = '';
+    url.password = '';
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^(?:api[_-]?key|access[_-]?token|auth(?:orization)?|cookie|key|login|password|session|token)$/i.test(key)) {
+        url.searchParams.delete(key);
+      }
+    }
+    return url.href;
+  } catch { return ''; }
+}
+function localShareImageUrl(kind, item) {
+  if (kind === 'worded') return wordedImageSrc(item);
+  return favoriteCacheSrc(item.id, item.cacheFile || item.updatedAt || '');
+}
+async function blobToDataUrl(blob) {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || Error('读取图片失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+async function buildShareRecord(record) {
+  const item = record.item;
+  const kind = record.kind || 'favorite';
+  const prompt = sharePromptFor(kind, item).trim();
+  if (!prompt) throw Error('只有已经写入提示词的卡片才能分享');
+  const source = inferredShareSource(item, kind);
+  const sourceId = shareSourceId(item, source);
+  const width = Number(kind === 'worded' ? item.width : item.image_width) || 0;
+  const height = Number(kind === 'worded' ? item.height : item.image_height) || 0;
+  const sourceImageUrl = safeShareUrl(item.sourceImageUrl || item.file_url || item.large_file_url);
+  const sourcePreviewUrl = safeShareUrl(item.sourcePreviewUrl || item.preview_file_url);
+  const share = {
+    id: String(item.id || ''), source, sourceId, sourcePageUrl: safeShareUrl(sourcePageUrlFor(item, source)),
+    sourceImageUrl, sourcePreviewUrl, previewImageUrl: sourcePreviewUrl, largeImageUrl: sourceImageUrl, fileImageUrl: sourceImageUrl,
+    imageWidth: width, imageHeight: height, rating: item.rating || 'g', title: item.title || item.name || '',
+    author: item.author || '', tags: [item.tag_string_general, item.tag_string_character, item.tag_string_copyright].filter(Boolean).join(' '),
+    prompt, summary: item.summary || '', preset: item.preset || '', resolvedPreset: item.resolvedPreset || ''
+  };
+  if (source === 'local') {
+    const localUrl = localShareImageUrl(kind, item);
+    if (!localUrl) throw Error('本地卡片没有可读取的图片缓存');
+    const response = await fetch(localUrl, { cache: 'no-store' });
+    if (!response.ok) throw Error(`读取本地图片失败：HTTP ${response.status}`);
+    const blob = await response.blob();
+    if (!blob.type.startsWith('image/')) throw Error('本地缓存不是有效图片');
+    if (blob.size > 80 * 1024 * 1024) throw Error('本地图片超过 80 MB，无法写入分享文件');
+    const dataUrl = await blobToDataUrl(blob);
+    share.image = { name: `${sourceId || item.id}.png`, mime: blob.type, width, height, dataUrl };
+  }
+  return share;
+}
+function dataUrlToBlob(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match) throw Error('分享文件中的本地图片格式无效');
+  const binary = atob(match[2]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], {type: match[1].toLowerCase()});
+}
+function dataUrlBytes(dataUrl) {
+  const value = String(dataUrl || '');
+  const comma = value.indexOf(',');
+  return comma < 0 ? 0 : Math.floor((value.length - comma - 1) * 3 / 4);
+}
+function normalizeShareImportItem(raw, index) {
+  if (!raw || typeof raw !== 'object') throw Error(`第 ${index + 1} 项不是对象`);
+  const id = String(raw.id || raw.sourceId || '').trim();
+  const sourceValue = String(raw.source || '').toLowerCase();
+  const source = ['danbooru', 'pixiv', 'local'].includes(sourceValue)
+    ? sourceValue
+    : (id.startsWith('px_') ? 'pixiv' : id.startsWith('local_') ? 'local' : 'danbooru');
+  const prompt = String(raw.prompt || '').trim();
+  if (!prompt) throw Error(`第 ${index + 1} 项没有提示词`);
+  if (prompt.length > 100000) throw Error(`第 ${index + 1} 项提示词过长`);
+  const image = raw.image && typeof raw.image === 'object' ? raw.image : null;
+  const dataUrl = image?.dataUrl ? String(image.dataUrl) : '';
+  if (source === 'local' && (!dataUrl || !/^data:image\/(?:png|jpeg|webp);base64,/i.test(dataUrl))) {
+    throw Error(`第 ${index + 1} 项是本地图片，但没有有效内嵌图片`);
+  }
+  if (dataUrl && dataUrlBytes(dataUrl) > 80 * 1024 * 1024) throw Error(`第 ${index + 1} 项图片超过 80 MB`);
+  const sourceImageUrl = safeShareUrl(raw.sourceImageUrl || raw.largeImageUrl || raw.fileImageUrl);
+  const sourcePreviewUrl = safeShareUrl(raw.sourcePreviewUrl || raw.previewImageUrl);
+  const sourcePageUrl = safeShareUrl(raw.sourcePageUrl);
+  if (source !== 'local' && !sourceImageUrl && !sourcePreviewUrl && !dataUrl) {
+    throw Error(`第 ${index + 1} 项缺少可读取的图片地址`);
+  }
+  if (source === 'danbooru' && id && !/^\d+$/.test(id) && !/^\d+$/.test(String(raw.sourceId || ''))) {
+    throw Error(`第 ${index + 1} 项的 Danbooru ID 无效`);
+  }
+  return {
+    id, source, sourceId: String(raw.sourceId || (source === 'pixiv' ? String(raw.pixiv_id || id).replace(/^px_/, '').split('_')[0] : id)),
+    sourcePageUrl, sourceImageUrl, sourcePreviewUrl, previewImageUrl: sourcePreviewUrl, largeImageUrl: sourceImageUrl, fileImageUrl: sourceImageUrl,
+    imageWidth: Math.max(0, Number(raw.imageWidth ?? image?.width) || 0), imageHeight: Math.max(0, Number(raw.imageHeight ?? image?.height) || 0),
+    rating: String(raw.rating || 'g'), title: String(raw.title || '').slice(0, 300), author: String(raw.author || '').slice(0, 100),
+    tags: String(raw.tags || ''), prompt, summary: String(raw.summary || '').slice(0, 500), preset: String(raw.preset || ''),
+    resolvedPreset: String(raw.resolvedPreset || ''), pixivId: String(raw.pixiv_id || (source === 'pixiv' ? raw.sourceId || id : '')), image: dataUrl ? {
+      name: String(image?.name || `${id || 'shared'}.png`).replace(/[/\\]/g, '_').slice(0, 120), mime: String(image?.mime || 'image/png'),
+      width: Number(image?.width) || 0, height: Number(image?.height) || 0, dataUrl
+    } : null
+  };
+}
+function registerShareCard(card, item, kind = 'favorite') {
+  const prompt = sharePromptFor(kind, item);
+  const key = `${kind}:${shareIdentity(item, kind)}`;
+  card.dataset.shareKey = key;
+  card._shareRecord = { kind, item };
+  card.classList.toggle('share-selectable', mode === 'favorites' && Boolean(prompt.trim()));
+  card.classList.toggle('share-selected', selectedShareKeys.has(key));
+  card.addEventListener('click', event => {
+    if (!shareSelectionMode || !card.classList.contains('share-selectable')) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest('button,select,input,textarea,a')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    toggleShareCardSelection(card);
+  }, true);
+}
+function toggleShareCardSelection(card) {
+  const key = card?.dataset.shareKey;
+  if (!key || !card.classList.contains('share-selectable')) return;
+  if (selectedShareKeys.has(key)) selectedShareKeys.delete(key);
+  else selectedShareKeys.add(key);
+  card.classList.toggle('share-selected', selectedShareKeys.has(key));
+  updateShareActions();
+}
+function selectedShareRecords() {
+  const records = [];
+  const liveKeys = new Set();
+  gallery.querySelectorAll('.share-selectable[data-share-key]').forEach(card => {
+    const key = card.dataset.shareKey;
+    liveKeys.add(key);
+    if (selectedShareKeys.has(key) && card._shareRecord) records.push(card._shareRecord);
+  });
+  for (const key of selectedShareKeys) if (!liveKeys.has(key)) selectedShareKeys.delete(key);
+  return records;
+}
+function updateShareActions() {
+  const select = document.querySelector('#batchSelect');
+  const del = document.querySelector('#batchDelete');
+  const share = document.querySelector('#batchShare');
+  const active = mode === 'favorites' && ['original', 'pending', 'worded', 'completed'].includes(favoriteFolder);
+  if (select) { select.hidden = !active; select.textContent = shareSelectionMode ? '退出选择' : '批量选择'; select.setAttribute('aria-pressed', String(shareSelectionMode)); }
+  if (del) del.hidden = !active || !shareSelectionMode;
+  if (share) {
+    const count = selectedShareKeys.size;
+    share.hidden = !active || !shareSelectionMode;
+    share.disabled = count === 0;
+    share.textContent = count ? `分享 (${count})` : '分享';
+  }
+}
+function enterShareSelection() {
+  if (mode !== 'favorites') return;
+  shareSelectionMode = true;
+  updateShareActions();
+}
+function exitShareSelection() {
+  shareSelectionMode = false;
+  selectedShareKeys.clear();
+  gallery.querySelectorAll('.share-selected').forEach(card => card.classList.remove('share-selected'));
+  updateShareActions();
+}
+
+function shareDownloadName() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `dflow-share-${stamp}.dflow-share.json`;
+}
+function sharePreviewSrc(item) {
+  if (item?.image?.dataUrl) return item.image.dataUrl;
+  // Import previews should use the site's preview-sized URL first. Loading a
+  // shared original/large URL here makes the preview dialog unnecessarily
+  // slow and can trigger a second CDN request before the user confirms.
+  const source = item?.sourcePreviewUrl || item?.sourceImageUrl;
+  return source ? imageSrc(source) : '';
+}
+async function exportShareFile(records) {
+  const list = Array.isArray(records) ? records.filter(Boolean) : [];
+  if (!list.length) { toast('没有可分享的提示词卡片'); return false; }
+  const button = document.querySelector('#batchShare');
+  if (button) { button.disabled = true; button.textContent = '正在整理…'; }
+  try {
+    const items = [];
+    for (let index = 0; index < list.length; index++) {
+      toast(list.length > 1 ? `正在整理分享图片 ${index + 1}/${list.length}…` : '正在整理分享图片…');
+      items.push(await buildShareRecord(list[index]));
+    }
+    const payload = {
+      format: 'dflow-share',
+      version: 1,
+      createdAt: new Date().toISOString(),
+      items
+    };
+    const serialized = JSON.stringify(payload, null, 2);
+    // Keep a batch export importable on the other side. Local images are
+    // embedded in the JSON, so fail before downloading a file larger than the
+    // import safety limit instead of producing an unusable partial share.
+    if (new Blob([serialized]).size > 240 * 1024 * 1024) {
+      throw Error('分享文件预计超过 240 MB，请分批分享');
+    }
+    const blob = new Blob([serialized], {type: 'application/json;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = shareDownloadName();
+    link.rel = 'noopener';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`已导出 ${items.length} 张提示词卡片`);
+    return true;
+  } catch (error) {
+    toast(`导出分享失败：${error.message || '未知错误'}`);
+    return false;
+  } finally {
+    if (button) { button.disabled = false; updateShareActions(); }
+  }
+}
+function updateShareImportSummary(message = '') {
+  const summary = document.querySelector('#shareImportSummary');
+  const status = document.querySelector('#shareImportStatus');
+  const items = pendingShareImport?.items || [];
+  const selected = pendingShareImport?.selected || new Set();
+  if (summary) summary.textContent = `共 ${items.length} 张，已选择 ${selected.size} 张；确认后会加入本地收藏的“有词区”。`;
+  if (status && message) status.textContent = message;
+  const confirmButton = document.querySelector('#shareImportConfirm');
+  if (confirmButton) confirmButton.disabled = selected.size === 0;
+}
+function closeShareImport() {
+  pendingShareImport = null;
+  const dialog = document.querySelector('#shareImportDialog');
+  if (dialog?.open) dialog.close();
+  const input = document.querySelector('#shareFileInput');
+  if (input) input.value = '';
+}
+function showShareImportPreview(items, warning = '') {
+  pendingShareImport = {items, selected: new Set(items.map((_, index) => index))};
+  const container = document.querySelector('#shareImportItems');
+  if (!container) return;
+  container.replaceChildren();
+  items.forEach((item, index) => {
+    const row = document.createElement('label');
+    row.className = 'share-import-item';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = true;
+    checkbox.dataset.index = String(index);
+    checkbox.setAttribute('aria-label', `选择第 ${index + 1} 张`);
+    checkbox.onchange = () => {
+      if (checkbox.checked) pendingShareImport?.selected.add(index);
+      else pendingShareImport?.selected.delete(index);
+      updateShareImportSummary();
+    };
+    const preview = document.createElement('img');
+    preview.loading = 'lazy';
+    preview.alt = item.title || `${item.source} ${item.sourceId}`;
+    const previewUrl = sharePreviewSrc(item);
+    if (previewUrl) {
+      preview.src = previewUrl;
+      preview.onerror = () => { preview.removeAttribute('src'); preview.alt = '图片预览加载失败'; };
+    }
+    const copy = document.createElement('div');
+    copy.className = 'share-import-copy';
+    const title = document.createElement('strong');
+    title.textContent = `${item.source === 'pixiv' ? 'P' : item.source === 'local' ? '本地' : 'D'} · ${item.title || item.sourceId || '无标题'}`;
+    const prompt = document.createElement('p');
+    prompt.textContent = item.prompt;
+    const source = document.createElement('span');
+    source.className = 'share-import-source';
+    source.textContent = item.sourcePageUrl || `${item.source} / ${item.sourceId || item.id}`;
+    copy.append(title, prompt, source);
+    row.append(checkbox, preview, copy);
+    container.append(row);
+  });
+  updateShareImportSummary(warning);
+  const dialog = document.querySelector('#shareImportDialog');
+  if (dialog && !dialog.open) {
+    try { dialog.showModal(); } catch { dialog.setAttribute('open', ''); }
+  }
+}
+async function importShareFile(file) {
+  if (!file) return;
+  try {
+    if (file.size > 250 * 1024 * 1024) throw Error('分享文件超过 250 MB');
+    const payload = JSON.parse(await file.text());
+    if (payload?.format !== 'dflow-share' || Number(payload?.version) !== 1) throw Error('不是受支持的 DFlow 分享文件');
+    if (!Array.isArray(payload.items) || !payload.items.length) throw Error('分享文件里没有卡片');
+    if (payload.items.length > 100) throw Error('单个分享文件最多导入 100 张卡片');
+    const items = [];
+    const errors = [];
+    payload.items.forEach((raw, index) => {
+      try { items.push(normalizeShareImportItem(raw, index)); }
+      catch (error) { errors.push(error.message); }
+    });
+    if (!items.length) throw Error(errors.join('；') || '没有可导入的卡片');
+    showShareImportPreview(items, errors.length ? `已忽略 ${errors.length} 项：${errors.join('；')}` : '');
+  } catch (error) {
+    toast(`读取分享文件失败：${error.message || '文件格式无效'}`);
+  }
+}
+function importedFavoriteFromShare(item, now) {
+  const source = item.source;
+  const sourceId = String(item.sourceId || item.id || '').trim();
+  const id = source === 'local'
+    ? `local_${(globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, '_')}`
+    : source === 'pixiv' ? `px_${sourceId}_p0` : sourceId;
+  const remoteImage = item.sourceImageUrl || '';
+  const remotePreview = item.sourcePreviewUrl || remoteImage;
+  const isPixivR18 = source === 'pixiv' && ['r18', 'e'].includes(String(item.rating || '').toLowerCase());
+  return {
+    id, source, sourceId, sourcePageUrl: item.sourcePageUrl || '', sourceImageUrl: remoteImage, sourcePreviewUrl: remotePreview,
+    pixiv_id: source === 'pixiv' ? sourceId : '', pixivRating: source === 'pixiv' ? (isPixivR18 ? 'r18' : 'safe') : '',
+    page_count: 1, title: item.title || '', author: item.author || '', rating: isPixivR18 ? 'e' : (item.rating || 'g'),
+    preview_file_url: remotePreview, large_file_url: remoteImage, file_url: remoteImage,
+    image_width: item.imageWidth || item.image?.width || 0, image_height: item.imageHeight || item.image?.height || 0,
+    tag_string_general: item.tags || '', tag_string_character: '', tag_string_copyright: '', created_at: now,
+    completed: false, folder: 'worded', preset: item.preset || presetConfig.defaultExpansion,
+    reversePreset: presetConfig.defaultReverse, autoEnabled: false, queueOrder: 0, prompt: item.prompt,
+    summary: item.summary || '', resolvedPreset: item.resolvedPreset || '', reverseStatus: 'idle', reverseError: '',
+    cacheStatus: 'idle', cacheFile: '', cacheError: '', promptWrittenAt: now, wordedAt: now, completedAt: '', createdAt: now, updatedAt: now
+  };
+}
+async function uploadImportedShareImage(favorite, image) {
+  if (!image?.dataUrl) return;
+  const blob = dataUrlToBlob(image.dataUrl);
+  const response = await fetch(`/api/favorites/${encodeURIComponent(String(favorite.id))}/image?width=${encodeURIComponent(image.width || favorite.image_width || 0)}&height=${encodeURIComponent(image.height || favorite.image_height || 0)}`, {
+    method: 'PUT', headers: {'Content-Type': blob.type}, body: blob
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw Error(result.error || `HTTP ${response.status}`);
+  const index = favoriteCache.findIndex(item => String(item.id) === String(favorite.id));
+  if (index >= 0) favoriteCache[index] = result.favorite || {...favoriteCache[index], cacheStatus: 'ready'};
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoriteCache));
+  updateFavoriteCount();
+}
+async function confirmShareImport() {
+  const importState = pendingShareImport;
+  if (!importState) return;
+  const selected = importState.items.filter((_, index) => importState.selected.has(index));
+  if (!selected.length) { updateShareImportSummary('至少选择一张卡片'); return; }
+  const button = document.querySelector('#shareImportConfirm');
+  if (button) { button.disabled = true; button.textContent = '正在导入…'; }
+  try {
+    const now = new Date().toISOString();
+    const existing = new Set(readFavorites().map(item => shareIdentity(item, 'favorite')));
+    const favorites = [];
+    const importPairs = [];
+    const skipped = [];
+    for (const item of selected) {
+      const incomingIdentity = `${item.source}:${item.sourceId}`;
+      if (item.source !== 'local' && existing.has(incomingIdentity)) { skipped.push(item); continue; }
+      const favorite = importedFavoriteFromShare(item, now);
+      if (item.source !== 'local' && existing.has(shareIdentity(favorite, 'favorite'))) { skipped.push(item); continue; }
+      favorites.push(favorite);
+      importPairs.push({ favorite, shareItem: item });
+      existing.add(shareIdentity(favorite, 'favorite'));
+    }
+    if (!favorites.length) throw Error('选择的卡片都已经在本地收藏中');
+    await saveFavorites([...readFavorites(), ...favorites]);
+    const uploadErrors = [];
+    for (const pair of importPairs) {
+      if (pair.shareItem.source !== 'local') continue;
+      try { await uploadImportedShareImage(pair.favorite, pair.shareItem.image); }
+      catch (error) { uploadErrors.push(`${pair.favorite.title || pair.favorite.id}：${error.message}`); }
+    }
+    closeShareImport();
+    exitShareSelection();
+    mode = 'favorites';
+    activateButton(document.querySelector('[data-mode="favorites"]'));
+    document.querySelector('#favoriteFolders')?.classList.remove('hidden');
+    favoriteFolder = 'worded';
+    document.querySelectorAll('#favoriteFolders [data-folder]').forEach(item => item.classList.toggle('active', item.dataset.folder === 'worded'));
+    refreshFavoriteGallery(false);
+    const suffix = skipped.length ? `，跳过重复 ${skipped.length} 张` : '';
+    toast(uploadErrors.length ? `已导入 ${favorites.length} 张；${uploadErrors.length} 张图片上传失败` : `已导入 ${favorites.length} 张到有词区${suffix}`);
+  } catch (error) {
+    updateShareImportSummary(`导入失败：${error.message}`);
+    if (button) { button.disabled = false; button.textContent = '确认加入收藏'; }
+  }
+}
+async function deleteSelectedShareCards() {
+  const records = selectedShareRecords();
+  if (!records.length) { toast('请先点击卡片选择要删除的内容'); return; }
+  if (!confirm(`确定删除选中的 ${records.length} 张提示词卡片？本地图片缓存也会删除。`)) return;
+  const worded = records.filter(record => record.kind === 'worded');
+  const favorites = records.filter(record => record.kind === 'favorite');
+  const errors = [];
+  for (const record of worded) {
+    try {
+      const response = await fetch(`/api/worded/entries/${encodeURIComponent(String(record.item.id))}`, {method: 'DELETE'});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw Error(result.error || `HTTP ${response.status}`);
+    } catch (error) { errors.push(error.message); }
+  }
+  if (favorites.length) {
+    const identities = new Set(favorites.map(record => shareIdentity(record.item, 'favorite')));
+    const remaining = readFavorites().filter(item => !identities.has(shareIdentity(item, 'favorite')));
+    await saveFavorites(remaining);
+  }
+  exitShareSelection();
+  if (mode === 'favorites') refreshFavoriteGallery(true);
+  toast(errors.length ? `已删除部分卡片，${errors.length} 张失败：${errors[0]}` : `已删除 ${records.length} 张卡片`);
+}
+function isFavorite(value) {
+  if (value && typeof value === 'object') return Boolean(findFavoriteForPost(value));
+  return readFavorites().some(item => String(item.id) === String(value));
 }
 function updateFavoriteCount() {
   const items = readFavorites();
@@ -484,27 +955,63 @@ function refreshFavoriteGallery(preserveScroll = true) {
     if (renderId === galleryRenderRequest && mode === 'favorites' && favoriteFolder === requestedFolder) scrollTo({ top });
   });
 }
+function updateVisibleFolderStatus() {
+  const count = gallery.querySelectorAll('.card, .reverse-card').length;
+  statusEl.textContent = count ? `显示 ${count} 个${folderName[favoriteFolder]}` : `还没有${folderName[favoriteFolder]}图片`;
+  sentinel.classList.remove('loading');
+  sentinel.classList.add('done');
+}
+function adjustWordedCount(delta) {
+  const count = document.querySelector('#wordedCount');
+  if (!count || !delta) return;
+  count.textContent = String(Math.max(0, (Number(count.textContent) || 0) + delta));
+}
 function removeVisibleCard(id) {
   const top = scrollY;
-  const card = document.querySelector(`[data-completed-id="${CSS.escape(String(id))}"], [data-reverse-id="${CSS.escape(String(id))}"], [data-favorite-id="${CSS.escape(String(id))}"]`)?.closest('.card, .reverse-card');
-  card?.remove();
+  const escapedId = CSS.escape(String(id));
+  const card = document.querySelector(
+    `[data-completed-id="${escapedId}"], [data-reverse-id="${escapedId}"], [data-favorite-id="${escapedId}"]`
+  )?.closest('.card, .reverse-card');
+  if (!card) {
+    // A card missing from the DOM means the view is already stale; recover once
+    // instead of silently leaving a moved item visible.
+    if (mode === 'favorites') refreshFavoriteGallery(true);
+    return;
+  }
+  card.remove();
+  currentPosts = currentPosts.filter(post => String(post.id) !== String(id));
+
+  // Ordered worded/completed galleries can reflow in place. Removing one grid
+  // child automatically fills the gap and keeps every other image element,
+  // scroll position, and decoded bitmap alive.
+  if (state.ordered) {
+    updateVisibleFolderStatus();
+    requestAnimationFrame(() => scrollTo({ top }));
+    return;
+  }
+
+  // Pending combines favorite cards and worded entries; its queue order needs a
+  // fresh merge after a removal. The user-facing no-refresh path is for the
+  // ordered worded/completed folders above.
+  if (favoriteFolder === 'pending') {
+    refreshFavoriteGallery(true);
+    return;
+  }
+
   const posts = favoriteVisibleItems();
   const cards = new Map([...gallery.querySelectorAll('.card, .reverse-card')].map(node =>
-    [String(node.dataset.reverseId || node.querySelector('[data-favorite-id]')?.dataset.favoriteId),node]));
+    [String(node.dataset.reverseId || node.querySelector('[data-favorite-id]')?.dataset.favoriteId), node]));
   if (posts.some(post => !cards.has(String(post.id)))) { refreshFavoriteGallery(true); return; }
-  // Worded/completed galleries are intentionally rendered in one ordered DOM
-  // list.  They do not have masonry columns to reflow; rebuilding here keeps
-  // the horizontal-first/time order intact after a card leaves the folder.
-  if (state.ordered) { refreshFavoriteGallery(true); return; }
-  currentPosts = posts;
   state.heights = state.columns.map(() => 0);
   for (const post of posts) {
+    const node = cards.get(String(post.id));
+    if (!node) continue;
     const index = state.heights.indexOf(Math.min(...state.heights));
-    state.columns[index].append(cards.get(String(post.id)));
+    state.columns[index].append(node);
     state.heights[index] += favoriteFolder === 'original' ? (post.image_height || 1) / (post.image_width || 1) + .03 : 1;
   }
-  statusEl.textContent = posts.length ? `显示 ${posts.length} 个${folderName[favoriteFolder]}` : `还没有${folderName[favoriteFolder]}图片`;
-  requestAnimationFrame(() => scrollTo({top}));
+  updateVisibleFolderStatus();
+  requestAnimationFrame(() => scrollTo({ top }));
 }
 async function patchFavorite(id, changes) {
   const revision = ++favoriteStateRevision;
@@ -573,7 +1080,8 @@ function updateCompletedButtons(id) {
 async function toggleFavorite(post) {
   invalidateGalleryRequests();
   const items = readFavorites();
-  const index = items.findIndex(item => String(item.id) === String(post.id));
+  const identity = shareIdentity(post, 'favorite');
+  const index = items.findIndex(item => shareIdentity(item, 'favorite') === identity);
   const before = index >= 0 ? { item: { ...items[index] }, index } : null;
   if (!undoing) undoStack.push({ type: 'favorite', post: favoriteFields(post), before });
   if (index >= 0) {
@@ -596,7 +1104,7 @@ async function undoLastAction() {
   try {
     const items = readFavorites();
     if (action.type === 'favorite') {
-      const currentIndex = items.findIndex(item => String(item.id) === String(action.post.id));
+      const currentIndex = items.findIndex(item => shareIdentity(item, 'favorite') === shareIdentity(action.post, 'favorite'));
       if (currentIndex >= 0) items.splice(currentIndex, 1);
       if (action.before) items.splice(Math.min(action.before.index, items.length), 0, action.before.item);
       await saveFavorites(items);
@@ -648,6 +1156,7 @@ function queueNextLoad() {
 async function load(reset = false) {
   if (!reset && (loading || ended)) return;
   if (reset) {
+    exitShareSelection();
     clearTimeout(nextLoadTimer);
     requestController?.abort();
     requestController = null;
@@ -716,6 +1225,9 @@ async function load(reset = false) {
         results.push(pendingRatingResults.get(rating));
       }
     }
+    const popularFallbackDate = station === 'dflow' && mode === 'popular-day'
+      ? [...new Set(results.map(batch => batch?.effectiveDate).filter(Boolean))][0] || ''
+      : '';
     const receivedCount = results.flat().length;
     const seen = new Set();
     let posts = results.flat().filter(post => post?.id && !seen.has(post.id) && seen.add(post.id));
@@ -740,7 +1252,9 @@ async function load(reset = false) {
     if (run !== generation || mode !== requestedMode || station !== requestedStation || favoriteFolder !== requestedFolder) return;
     if (!posts.length) {
       ended = true;
-      statusEl.textContent = receivedCount ? `接口返回 ${receivedCount} 张，但没有可显示的图片` : (station === 'pflow' && !manualSearchTags ? 'Pixiv 榜单已到底' : '暂时没有更多图片');
+      statusEl.textContent = popularFallbackDate
+        ? `今日榜暂无数据，当前显示 ${popularFallbackDate} 日榜`
+        : receivedCount ? `接口返回 ${receivedCount} 张，但没有可显示的图片` : (station === 'pflow' && !manualSearchTags ? 'Pixiv 榜单已到底' : '暂时没有更多图片');
       sentinel.classList.add('done');
       return;
     }
@@ -758,7 +1272,9 @@ async function load(reset = false) {
       sentinel.classList.add('done');
       statusEl.textContent = `Pixiv 榜单已到底，共显示 ${currentPosts.length} 张`;
     } else {
-      statusEl.textContent = '继续下滑加载';
+      statusEl.textContent = popularFallbackDate
+        ? `今日榜暂无数据，当前显示 ${popularFallbackDate} 日榜；继续下滑加载`
+        : '继续下滑加载';
     }
   } catch (error) {
     if (run !== generation || mode !== requestedMode || station !== requestedStation || favoriteFolder !== requestedFolder) return;
@@ -867,9 +1383,9 @@ async function load(reset = false) {
     const favoriteButton = document.createElement('button');
     favoriteButton.className = 'favorite-button';
     favoriteButton.dataset.favoriteId = post.id;
-    favoriteButton.innerHTML = isFavorite(post.id) ? HEART_SVG : HEART_OUTLINE_SVG;
-    favoriteButton.classList.toggle('active', isFavorite(post.id));
-    favoriteButton.title = isFavorite(post.id) ? '取消收藏' : '加入本地收藏';
+    favoriteButton.innerHTML = isFavorite(post) ? HEART_SVG : HEART_OUTLINE_SVG;
+    favoriteButton.classList.toggle('active', isFavorite(post));
+    favoriteButton.title = isFavorite(post) ? '取消收藏' : '加入本地收藏';
     favoriteButton.setAttribute('aria-label', favoriteButton.title);
     favoriteButton.onclick = event => {
       event.stopPropagation();
@@ -954,6 +1470,7 @@ async function load(reset = false) {
     };
     card._updateFavoriteState(post);
     card.oncontextmenu = event => showMenu(event, post);
+    registerShareCard(card, post, 'favorite');
     card.addEventListener('click', () => openLightbox(post, card, isOriginalFavorite ? (img.currentSrc || img.src) : ''));
     appendRenderedCard(card, ratio + .03);
   }
@@ -1342,6 +1859,7 @@ function renderReverseCard(item, options = {}) {
   }
 
   card.oncontextmenu = event => isWordedEntry ? showManualMenu(event, item) : showMenu(event, item);
+  registerShareCard(card, item, isWordedEntry ? 'worded' : 'favorite');
   appendRenderedCard(card);
 }
 function promptCharacterCount(value) {
@@ -1546,7 +2064,7 @@ function showPromptDialog(prompt, target, onSaved) {
         }
         if (session.target.kind === 'fromPost') {
           const post=session.target.post;
-          if(!isFavorite(post.id)) await saveFavorites([favoriteFields(post),...readFavorites()]);
+          if(!isFavorite(post)) await saveFavorites([favoriteFields(post),...readFavorites()]);
           if(session.imageFile)await uploadFavoriteImage(post.id,session.imageFile);
           await patchFavorite(post.id,{prompt:value,folder:'worded'});
           dialog.close();favoriteFolder='worded';
@@ -1762,8 +2280,10 @@ let activeManual = null;
 function showManualMenu(event, item) {
   event.preventDefault(); activePost = null; activeManual = item;
   menu.querySelectorAll('[data-action]').forEach(button => {
-    button.hidden = button.dataset.action !== 'create-prompt' && button.dataset.action !== 'delete';
+    button.hidden = !['create-prompt', 'share', 'delete'].includes(button.dataset.action);
   });
+  const shareBtn = menu.querySelector('[data-action="share"]');
+  if (shareBtn) shareBtn.hidden = !sharePromptFor('worded', item).trim();
   const delBtn = menu.querySelector('[data-action="delete"]');
   if (delBtn) delBtn.textContent = '删除本地卡片';
   menu.classList.remove('hidden');
@@ -1774,7 +2294,10 @@ function showMenu(event, post) {
   event.preventDefault();
   activePost = post; activeManual = null;
   menu.querySelectorAll('[data-action]').forEach(button => button.hidden = false);
-  menu.querySelector('[data-action="favorite"]').textContent = isFavorite(post.id) ? '取消本地收藏' : '加入本地收藏';
+  menu.querySelector('[data-action="favorite"]').textContent = isFavorite(post) ? '取消本地收藏' : '加入本地收藏';
+  const saved = findFavoriteForPost(post);
+  const shareBtn = menu.querySelector('[data-action="share"]');
+  if (shareBtn) shareBtn.hidden = !sharePromptFor('favorite', saved || post).trim();
   const delBtn = menu.querySelector('[data-action="delete"]');
   if (delBtn) {
     if (mode === 'favorites') {
@@ -1805,7 +2328,7 @@ async function copyImage(post) {
     throw Error('当前页面不允许写入图片剪贴板，请使用 localhost/HTTPS 打开并允许剪贴板权限');
   }
   toast('正在准备高清图片…');
-  const saved = readFavorites().find(item => String(item.id) === String(post.id));
+  const saved = findFavoriteForPost(post);
   const cached = saved?.cacheStatus === 'ready' || post.cacheStatus === 'ready';
   const localUrl = post.imageExt
     ? `/api/worded/images/${encodeURIComponent(post.id)}`
@@ -1890,9 +2413,12 @@ menu.onclick = async event => {
       return;
     }
     if (action === 'favorite' && activePost) await toggleFavorite(activePost);
+    if (action === 'share') {
+      await exportShareFile([activeManual ? {kind: 'worded', item: activeManual} : {kind: 'favorite', item: findFavoriteForPost(activePost) || activePost}]);
+    }
     if (action === 'create-prompt') {
       if(activeManual)showPromptDialog(activeManual.positive,{kind:'moveWorded',id:activeManual.id,imageUrl:activeManual.imageExt?`/api/worded/images/${encodeURIComponent(activeManual.id)}`:'',summary:activeManual.summary});
-      else {const saved=readFavorites().find(item=>String(item.id)===String(activePost.id));showPromptDialog(saved?.prompt||'',{kind:'fromPost',post:activePost,imageUrl:saved?.cacheStatus==='ready'?`/api/reverse/image/${activePost.id}`:imageSrc(activePost.large_file_url||activePost.preview_file_url)});}
+      else {const saved=findFavoriteForPost(activePost);showPromptDialog(saved?.prompt||'',{kind:'fromPost',post:activePost,imageUrl:saved?.cacheStatus==='ready'?`/api/reverse/image/${activePost.id}`:imageSrc(activePost.large_file_url||activePost.preview_file_url)});}
     }
     if (action === 'copy') await copyImage(activePost || activeManual);
     if (action === 'url') { await copyTextToClipboard(hiRes(activePost)); toast('已复制高清图地址'); }
@@ -1984,6 +2510,7 @@ function selectMode(nextMode, button) {
     return;
   }
   saveCurrentView();
+  exitShareSelection();
   invalidateGalleryRequests();
   mode = nextMode;
   activateButton(button || document.querySelector(`[data-mode="${nextMode}"]`));
@@ -2090,6 +2617,7 @@ document.querySelectorAll('#favoriteFolders [data-folder]').forEach(button => bu
     return;
   }
   if (mode === 'favorites') saveCurrentView();
+  exitShareSelection();
   invalidateGalleryRequests();
   favoriteFolder = button.dataset.folder;
   document.querySelectorAll('#favoriteFolders [data-folder]').forEach(item => item.classList.toggle('active', item === button));
@@ -2128,9 +2656,43 @@ if (retryMissingCache) retryMissingCache.onclick = async event => {
     toast(`补全缓存失败：${error.name === 'TimeoutError' ? '请求超时，请稍后重试' : error.message}`);
   } finally {
     retryCacheBusy = false;
+    retryMissingCache.disabled = false;
     updateFavoriteCount();
+    if (!retryMissingCache.hidden) retryMissingCache.textContent = '重新下载未缓存';
   }
 };
+const batchSelectButton = document.querySelector('#batchSelect');
+if (batchSelectButton) batchSelectButton.onclick = event => {
+  event.stopPropagation();
+  if (shareSelectionMode) exitShareSelection();
+  else enterShareSelection();
+};
+document.querySelector('#batchDelete')?.addEventListener('click', event => {
+  event.stopPropagation();
+  deleteSelectedShareCards();
+});
+document.querySelector('#batchShare')?.addEventListener('click', async event => {
+  event.stopPropagation();
+  const records = selectedShareRecords();
+  if (!records.length) { toast('请先点击卡片选择要分享的内容'); return; }
+  const success = await exportShareFile(records);
+  if (success) exitShareSelection();
+});
+document.querySelector('#importShare')?.addEventListener('click', event => {
+  event.stopPropagation();
+  document.querySelector('#shareFileInput')?.click();
+});
+document.querySelector('#shareFileInput')?.addEventListener('change', event => {
+  const file = event.target.files?.[0];
+  importShareFile(file);
+});
+document.querySelector('#shareImportConfirm')?.addEventListener('click', confirmShareImport);
+document.querySelector('#shareImportCancel')?.addEventListener('click', closeShareImport);
+document.querySelector('#shareImportClose')?.addEventListener('click', closeShareImport);
+document.querySelector('#shareImportDialog')?.addEventListener('cancel', event => {
+  event.preventDefault();
+  closeShareImport();
+});
 document.querySelector('#searchBtn').onclick = () => {
   manualSearchTags = normalizeSearchTags(searchInput.value);
   searchInput.value = manualSearchTags;
@@ -2960,18 +3522,32 @@ async function loadWordedGallery(preserveScroll = false, renderId = ++galleryRen
     if (requestId === wordedGalleryRequest && renderId === galleryRenderRequest) statusEl.textContent = '读取有词区失败：' + error.message;
   }
 }
-async function changeWordedFolder(item,folder){
-  // Moving a card invalidates every in-flight gallery response before the
-  // PATCH starts, so a late response cannot paint the previous folder or
-  // resurrect its old card renderer.
+async function changeWordedFolder(item, folder) {
+  const sourceFolder = favoriteFolder;
   invalidateGalleryRequests();
   const renderId = galleryRenderRequest;
-  try{
-    const response=await fetch(`/api/worded/state/${encodeURIComponent(item.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder})});
-    const data=await response.json();if(!response.ok)throw Error(data.error||`HTTP ${response.status}`);
+  try {
+    const response = await fetch(`/api/worded/state/${encodeURIComponent(item.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder })
+    });
+    const data = await response.json();
+    if (!response.ok) throw Error(data.error || `HTTP ${response.status}`);
     Object.assign(item, data.entry || data.item || {});
+
+    if (mode === 'favorites' && favoriteFolder === sourceFolder &&
+        ['worded', 'completed'].includes(sourceFolder) && sourceFolder !== folder) {
+      if (sourceFolder === 'worded' && folder !== 'worded') adjustWordedCount(-1);
+      if (sourceFolder !== 'worded' && folder === 'worded') adjustWordedCount(1);
+      removeVisibleCard(item.id);
+      toast(`已移到“${folderName[folder]}”`);
+      return;
+    }
     await loadWordedGallery(true, renderId);
-  }catch(error){toast(`移动失败：${error.message}`)}
+  } catch (error) {
+    toast(`移动失败：${error.message}`);
+  }
 }
 function renderWordedCard(item, options = {}) {
   const folder = ['pending', 'worded', 'completed'].includes(item.folder) ? item.folder : 'worded';

@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>DFlow / PFlow</title>
-  <link rel="stylesheet" href="/style.css?v=20261004-01">
+  <link rel="stylesheet" href="/style.css?v=20261004-02">
 </head>
 <body>
 <header>
@@ -94,6 +94,11 @@
   <button type="button" data-folder="worded">有词区 <span id="wordedCount">0</span></button>
   <button type="button" data-folder="completed">已完成 <span id="completedCount">0</span></button>
   <button type="button" id="retryMissingCache" class="cache-retry-all" disabled>重新下载未缓存</button>
+  <button type="button" id="batchSelect">批量选择</button>
+  <button type="button" id="batchDelete" class="batch-action-danger" hidden>删除</button>
+  <button type="button" id="batchShare" hidden disabled>分享</button>
+  <button type="button" id="importShare">导入分享</button>
+  <input id="shareFileInput" type="file" accept=".json,.dflow-share.json,application/json" hidden>
   <button type="button" id="manualWorded">手写提示词</button>
 </div>
 <div id="metadataUpload" hidden><label>导入 ComfyUI PNG（支持多选）<input id="metadataFiles" type="file" accept="image/png,.png" multiple></label><span>需图片本身保留工作流／生成信息；网站预览图通常不含元数据。</span></div>
@@ -105,6 +110,7 @@
   <button data-action="copy">复制高清图片</button>
   <button data-action="url">复制高清图地址</button>
   <button data-action="open">新标签页打开高清图</button>
+  <button data-action="share">分享提示词卡片</button>
   <button data-action="delete" class="menu-danger">删除卡片</button>
 </div>
 
@@ -250,6 +256,23 @@
   <img id="lightboxImage" alt="高清预览"><div id="lightboxHint">点击空白处关闭</div>
 </div>
 <div id="toast"></div>
+<dialog id="shareImportDialog" class="share-import-dialog">
+  <div class="share-import-inner">
+    <div class="share-import-header">
+      <div>
+        <h3>导入提示词卡片</h3>
+        <p id="shareImportSummary">请选择要加入本地收藏的卡片。</p>
+      </div>
+      <button type="button" id="shareImportClose" class="dialog-close-btn" aria-label="关闭">×</button>
+    </div>
+    <div id="shareImportItems" class="share-import-items"></div>
+    <div id="shareImportStatus" class="share-import-status" role="status"></div>
+    <div class="share-import-actions">
+      <button type="button" id="shareImportCancel" class="btn-subtle">取消</button>
+      <button type="button" id="shareImportConfirm" class="btn-primary">确认加入收藏</button>
+    </div>
+  </div>
+</dialog>
 <dialog id="updateDialog" class="update-dialog">
   <div class="update-dialog-inner">
     <h3>发现新版本</h3>
@@ -263,6 +286,6 @@
     </div>
   </div>
 </dialog>
-<script type="module" src="/app.js?v=20261004-01"></script>
+<script type="module" src="/app.js?v=20261004-04"></script>
 </body>
 </html>

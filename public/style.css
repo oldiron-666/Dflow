@@ -1969,3 +1969,66 @@ dialog.settings-modal:has(#tabMcp.active) { width: min(1100px, 96vw); }
 .reverse-card.pending-card .direct-reverse-button { flex-shrink: 0; min-width: 54px; padding: 5px 8px; white-space: nowrap; }
 
 dialog.settings-modal:has(#tabMcp.active) #saveSettings { display: none; }
+
+
+/* Prompt-card sharing and import */
+.favorite-folders .batch-action-danger { color: #fca5a5; border-color: rgba(248, 113, 113, .35); }
+.favorite-folders .batch-action-danger:hover { color: #fecaca; border-color: rgba(248, 113, 113, .7); background: rgba(127, 29, 29, .32); }
+.favorite-folders button:disabled { opacity: .48; cursor: not-allowed; }
+.card.share-selectable,
+.reverse-card.share-selectable { cursor: pointer; }
+.card.share-selected,
+.reverse-card.share-selected {
+  border-color: rgba(134, 239, 172, .95) !important;
+  box-shadow:
+    inset 0 0 0 2px rgba(134, 239, 172, .85),
+    inset 0 0 35px rgba(134, 239, 172, .22),
+    0 0 0 1px rgba(134, 239, 172, .25);
+}
+.card.share-selected::after,
+.reverse-card.share-selected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+  background: radial-gradient(ellipse at center, rgba(134, 239, 172, .02), rgba(134, 239, 172, .2));
+}
+.share-import-dialog {
+  width: min(720px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: min(82dvh, 760px);
+  padding: 0;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 16px;
+  color: #e8edf5;
+  background: #171b23f7;
+  box-shadow: 0 24px 80px rgba(0,0,0,.6);
+  overflow: hidden;
+}
+.share-import-dialog::backdrop { background: rgba(3,5,8,.62); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.share-import-inner { display: flex; flex-direction: column; min-height: 0; max-height: min(82dvh, 760px); }
+.share-import-header { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; padding: 18px 20px 14px; border-bottom: 1px solid rgba(255,255,255,.09); }
+.share-import-header h3 { margin: 0 0 5px; font-size: 17px; }
+.share-import-header p { margin: 0; color: var(--text-muted); font-size: 12px; }
+.share-import-header .dialog-close-btn { position: static; flex: 0 0 auto; }
+.share-import-items { min-height: 70px; max-height: min(58dvh, 520px); overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; scrollbar-width: thin; }
+.share-import-item { display: grid; grid-template-columns: 22px 68px minmax(0,1fr); gap: 10px; align-items: center; padding: 8px; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: rgba(255,255,255,.035); }
+.share-import-item:has(input:checked) { border-color: rgba(134,239,172,.65); background: rgba(134,239,172,.08); }
+.share-import-item input { width: 16px; height: 16px; accent-color: #86efac; }
+.share-import-item img { width: 68px; height: 68px; object-fit: cover; border-radius: 7px; background: #0b0e13; }
+.share-import-item .share-import-copy { min-width: 0; }
+.share-import-item strong { display: block; margin-bottom: 4px; font-size: 12px; color: #d7fbe3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.share-import-item p { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.share-import-item .share-import-source { display: inline-block; margin-top: 4px; color: #94a3b8; font-size: 10px; }
+.share-import-status { min-height: 18px; padding: 0 20px; color: #fcd34d; font-size: 11px; }
+.share-import-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid rgba(255,255,255,.09); }
+.share-import-actions button { min-width: 96px; }
+@media (max-width: 640px) {
+  .favorite-folders { padding-left: 10px; padding-right: 10px; gap: 6px; }
+  .favorite-folders button { padding: 6px 10px; font-size: 12px; }
+  .share-import-dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); }
+  .share-import-header { padding: 14px; }
+  .share-import-items { padding: 10px; }
+  .share-import-actions { padding: 10px 14px 14px; }
+}
