@@ -33,7 +33,9 @@ app.get("/api/version", async (_req, res) => {
     try {
       const [commitResponse, packageResponse] = await Promise.all([
         fetch(`https://api.github.com/repos/${GITHUB_REPO}/commits/${GITHUB_BRANCH}`, { headers: VERSION_HEADERS, signal: AbortSignal.timeout(8000) }),
-        fetch(`https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}/package.json`, { headers: VERSION_HEADERS, signal: AbortSignal.timeout(8000) })
+        // Read package.json through the GitHub API instead of raw.githubusercontent.com.
+        // The raw CDN may briefly serve the previous version after a push.
+        fetch(`https://api.github.com/repos/${GITHUB_REPO}/contents/package.json?ref=${encodeURIComponent(GITHUB_BRANCH)}`, { headers: VERSION_HEADERS, signal: AbortSignal.timeout(8000) })
       ]);
       const latest = {};
       if (commitResponse.ok) {
@@ -44,7 +46,11 @@ app.get("/api/version", async (_req, res) => {
       }
       if (packageResponse.ok) {
         const packageInfo = await packageResponse.json();
-        latest.version = String(packageInfo.version || "");
+        let packageJson = packageInfo;
+        if (packageInfo?.encoding === "base64" && packageInfo.content) {
+          packageJson = JSON.parse(Buffer.from(String(packageInfo.content).replace(/\s+/g, ""), "base64").toString("utf8"));
+        }
+        latest.version = String(packageJson.version || "");
       }
       if (!latest.commit && !latest.version) throw Error(`GitHub HTTP ${commitResponse.status}/${packageResponse.status}`);
       versionCheckCache = { at: now, latest };
@@ -54,7 +60,9 @@ app.get("/api/version", async (_req, res) => {
   }
   const latest = versionCheckCache.latest;
   const commitChanged = Boolean(latest?.commit && (!LOCAL_COMMIT || latest.commit !== LOCAL_COMMIT));
-  const versionChanged = Boolean(latest?.version && latest.version !== APP_VERSION);
+  // A GitHub commit is authoritative. This also avoids a false update prompt
+  // if GitHub's package metadata endpoint is briefly behind the commit API.
+  const versionChanged = Boolean(latest?.version && latest.version !== APP_VERSION && (!latest.commit || latest.commit !== LOCAL_COMMIT));
   res.json({ ok: true, current: { version: APP_VERSION, commit: LOCAL_COMMIT }, latest, updateAvailable: commitChanged || versionChanged });
 });
 
