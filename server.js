@@ -13,6 +13,13 @@ const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "0.0.0.0";
 const DANBOORU = "https://danbooru.donmai.us";
 app.use(express.json({ limit: "5mb" }));
+// Always revalidate the shell so a restarted local DFlow service cannot leave
+// the browser on an old app.js/style.css version. Hashed query strings still
+// provide normal cacheability for the static assets themselves.
+app.get("/", (_req, res) => {
+  res.set("Cache-Control", "no-store, max-age=0");
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 app.use(express.static(path.join(__dirname, "public")));
 const APP_VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).version || "0.1.0"; } catch { return "0.1.0"; } })();
 const LOCAL_COMMIT = (() => { try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: __dirname, encoding: "utf8", windowsHide: true }).trim(); } catch { return ""; } })();

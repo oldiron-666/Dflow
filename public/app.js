@@ -148,7 +148,7 @@ function resetColumns() {
   state.ordered = mode === 'favorites' && (favoriteFolder === 'worded' || favoriteFolder === 'completed');
   gallery.classList.toggle('ordered-gallery', state.ordered);
   const count = mode === 'favorites' && favoriteFolder === 'pending'
-    ? Math.min(columnCount(), innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 2 : 4)
+    ? Math.min(columnCount(), innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 2 : 5)
     : (mode === 'favorites' && (favoriteFolder === 'worded' || favoriteFolder === 'completed')) || mode === 'metadata'
       ? Math.min(columnCount(), innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 3 : 5)
       : columnCount();
@@ -618,11 +618,22 @@ async function undoLastAction() {
   }
 }
 function favoriteMatches(post) {
-  if (!ratingChecks().includes(post.rating)) return false;
+  // Local collections are shared by Dflow and Pflow.  Pflow's radio values
+  // are `safe`/`r18`, while Danbooru favorites store `g`/`s`/`q`/`e`;
+  // applying the Pflow radio to every local card makes the whole collection
+  // look empty. Keep Dflow's four-way filter for Danbooru views, and only
+  // apply the Pflow age switch to Pixiv favorites.
+  const isPixivFavorite = post?.source === 'pixiv' || String(post?.id || '').startsWith('px_');
+  if (station === 'dflow') {
+    if (!ratingChecks().includes(post.rating)) return false;
+  } else if (station === 'pflow' && isPixivFavorite) {
+    const isR18 = String(post.rating || '').toLowerCase() === 'e' || post.pixivRating === 'r18';
+    if (pixivRating === 'r18' ? !isR18 : isR18) return false;
+  }
   const wanted = [...selectedPopularTags];
   if (manualSearchTags) wanted.push(...manualSearchTags.split(/\s+/).filter(tag => !tag.includes(':')));
   if (!wanted.length) return true;
-  const all = `${post.tag_string_general || ''} ${post.tag_string_character || ''} ${post.tag_string_copyright || ''}`.split(/\s+/);
+  const all = `${post.tag_string_general || ''} ${post.tag_string_character || ''} ${post.tag_string_copyright || ''} ${post.tag_string || ''}`.split(/\s+/);
   return wanted.every(tag => all.includes(tag));
 }
 function isNearLoadPoint() {
