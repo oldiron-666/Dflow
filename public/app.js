@@ -148,13 +148,9 @@ function resetColumns() {
   gallery.innerHTML = '';
   state.columns = [];
   state.heights = [];
-  state.ordered = mode === 'favorites' && (favoriteFolder === 'worded' || favoriteFolder === 'completed');
-  gallery.classList.toggle('ordered-gallery', state.ordered);
-  const count = mode === 'favorites' && favoriteFolder === 'pending'
-    ? Math.min(columnCount(), innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 2 : 5)
-    : (mode === 'favorites' && (favoriteFolder === 'worded' || favoriteFolder === 'completed')) || mode === 'metadata'
-      ? Math.min(columnCount(), innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 3 : 5)
-      : columnCount();
+  state.ordered = false;
+  gallery.classList.toggle('ordered-gallery', false);
+  const count = innerWidth <= 760 ? Math.min(columnCount(), 2) : columnCount();
   gallery.style.setProperty('--gallery-cols', count);
   if (state.ordered) {
     const styles = getComputedStyle(gallery);
@@ -1578,13 +1574,100 @@ async function runDirectReverse(item, controls) {
     if (document.body.contains(button)) updatePendingControls(item, controls);
   }
 }
+function attach3DCardTilt(card, cardWrapper) {
+  const maxTiltDeg = 13; // 默认适度灵敏度（已降半）
+  let cachedRect = null;
+  let rafId = null;
+
+  card.addEventListener('mouseenter', () => {
+    cachedRect = card.getBoundingClientRect();
+  }, { passive: true });
+
+  card.addEventListener('mousemove', (e) => {
+    if (!cachedRect) cachedRect = card.getBoundingClientRect();
+    if (rafId) return;
+    const clientX = e.clientX;
+    const clientY = e.clientY;
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      if (!cachedRect) return;
+      const x = clientX - cachedRect.left;
+      const y = clientY - cachedRect.top;
+      const centerX = cachedRect.width / 2;
+      const centerY = cachedRect.height / 2;
+      const percentX = (x - centerX) / centerX;
+      const percentY = (y - centerY) / centerY;
+      const tiltX = -percentY * maxTiltDeg;
+      const tiltY = percentX * maxTiltDeg;
+      cardWrapper.style.transform = `rotateX(${tiltX.toFixed(2)}deg) rotateY(${tiltY.toFixed(2)}deg)`;
+    });
+  }, { passive: true });
+
+  card.addEventListener('mouseleave', () => {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    cachedRect = null;
+    cardWrapper.style.transform = 'rotateX(0deg) rotateY(0deg)';
+  }, { passive: true });
+}
+
+function attach3DCardFlip(card, cardInner) {
+  let autoFlipTimer = null;
+  const AUTO_FLIP_DELAY = 15000; // 自动翻回时间加长1/2（从10秒延长至15秒）
+
+  function scheduleAutoFlip() {
+    clearTimeout(autoFlipTimer);
+    if (!cardInner.classList.contains('flipped')) return;
+    autoFlipTimer = setTimeout(() => {
+      // 若当前用户未处于悬停且焦点不在卡片内部，则平滑执行 3D 翻转动画返回正面
+      if (cardInner.classList.contains('flipped') && !card.contains(document.activeElement) && !card.matches(':hover')) {
+        cardInner.classList.remove('flipped');
+      } else if (cardInner.classList.contains('flipped')) {
+        scheduleAutoFlip();
+      }
+    }, AUTO_FLIP_DELAY);
+  }
+
+  function cancelAutoFlip() {
+    clearTimeout(autoFlipTimer);
+  }
+
+  card._flipToggle = () => {
+    const isFlipped = cardInner.classList.toggle('flipped');
+    if (isFlipped) scheduleAutoFlip();
+    else cancelAutoFlip();
+  };
+
+  card._flipToFront = () => {
+    cancelAutoFlip();
+    cardInner.classList.remove('flipped');
+  };
+
+  card.addEventListener('click', (e) => {
+    if (e.target.closest('button, input, textarea, select, summary, details, [contenteditable="true"], .preset-option-item, .preset-bar-clickable, .param-item, a')) {
+      scheduleAutoFlip();
+      return;
+    }
+    card._flipToggle();
+  });
+
+  card.addEventListener('mouseenter', () => {
+    cancelAutoFlip();
+  }, { passive: true });
+
+  card.addEventListener('mouseleave', () => {
+    if (cardInner.classList.contains('flipped')) {
+      scheduleAutoFlip();
+    }
+  }, { passive: true });
+}
+
 function renderReverseCard(item, options = {}) {
   const kind = options.kind || 'favorite';
   const isWordedEntry = kind === 'worded';
   const folder = options.folder || (isWordedEntry ? item.folder || 'worded' : favoriteFolder);
   const pending = folder === 'pending';
   const isWordedOrCompleted = folder === 'worded' || folder === 'completed';
-  const prompt = String(isWordedEntry ? (item.positive || '') : (item.prompt || ''));
+  let prompt = String(isWordedEntry ? (item.positive || '') : (item.prompt || ''));
   const initialQueueOrder = displayQueueOrder(options.displayQueueOrder) ?? displayQueueOrder(item.queueOrder);
   const width = Math.max(1, Number(isWordedEntry ? item.width : item.image_width) || 1);
   const height = Math.max(1, Number(isWordedEntry ? item.height : item.image_height) || 1);
@@ -1599,19 +1682,43 @@ function renderReverseCard(item, options = {}) {
       ? favoriteCacheSrc(item.id, item.cacheFile || item.updatedAt || '')
       : (remoteSources[0] || '');
   const hasImage = Boolean(imageUrl || remoteSources.length);
+
   const card = document.createElement('article');
-  let pendingControls = null;
-  card.className = `reverse-card ${isLandscape ? 'landscape' : 'portrait'} ${pending && !cachedImage ? 'uncached' : ''}${!hasImage ? ' text-only' : ''}`;
+  card.className = `reverse-card 3d-card ${isLandscape ? 'landscape' : 'portrait'} ${pending && !cachedImage ? 'uncached' : ''}${!hasImage ? ' text-only' : ''}${pending ? ' pending-card' : ' worded-card'}`;
   card.dataset.reverseId = String(item.id);
   if (isWordedEntry) card.dataset.wordedId = String(item.id);
 
-  const image = hasImage ? document.createElement('img') : null;
+  const cardWrapper = document.createElement('div');
+  cardWrapper.className = 'card-wrapper';
+  if (imageUrl) {
+    cardWrapper.style.setProperty('--card-bg-img', `url("${imageUrl}")`);
+  }
+
+  const cardInner = document.createElement('div');
+  cardInner.className = 'card-inner';
+
+  const cardHolo = document.createElement('div');
+  cardHolo.className = 'card-holo';
+  cardHolo.style.display = 'none'; // 闪卡默认关闭
+
+  // ---------------- FRONT FACE ----------------
+  const frontFace = document.createElement('div');
+  frontFace.className = `card-face card-front ${isLandscape ? 'landscape-front' : 'portrait-front'}`;
+
+  const artworkContainer = document.createElement('div');
+  artworkContainer.className = 'artwork-container';
+
   let sourceIndex = 0;
+  const image = hasImage ? document.createElement('img') : null;
   if (image) {
+    image.className = 'art-img';
     image.loading = 'lazy';
     image.decoding = 'async';
     image.alt = item.name || `${isWordedEntry ? '提示词卡片' : 'Danbooru #'}${item.id}`;
     image.src = imageUrl || remoteSources[0] || '';
+    if (width > 1 && height > 1) {
+      image.style.aspectRatio = `${width} / ${height}`;
+    }
     if (cachedImage) image.dataset.cacheReady = '1';
     image.onerror = () => {
       if (!isWordedEntry && sourceIndex + 1 < remoteSources.length) {
@@ -1620,29 +1727,24 @@ function renderReverseCard(item, options = {}) {
         image.src = remoteSources[sourceIndex];
       }
     };
-  }
-  const picture = document.createElement('div');
-  picture.className = 'reverse-picture';
-  if (image) {
-    image.onclick = () => openLightbox(
-      {...item, image_width: width, image_height: height},
-      card,
-      image.currentSrc || image.src
-    );
-    picture.append(image);
-    const imageShare = pending ? (isLandscape ? 62 : 55) : 60;
-    if (isLandscape) picture.style.height = `${Math.min(imageShare, height / width * 100)}%`;
-    else picture.style.width = `${Math.min(imageShare, width / height * 100)}%`;
+    image.ondblclick = (e) => {
+      e.stopPropagation();
+      openLightbox({...item, image_width: width, image_height: height}, card, image.currentSrc || image.src);
+    };
+    const specular = document.createElement('div');
+    specular.className = 'art-specular';
+    artworkContainer.append(image, specular);
   } else {
     const summary = document.createElement('span');
     summary.className = 'text-summary';
     summary.textContent = item.summary || prompt.slice(0, 30) || '暂无图片';
-    picture.append(summary);
-    picture.style.height = '60%';
+    artworkContainer.append(summary);
   }
 
-  const panel = document.createElement('div');
-  panel.className = 'reverse-panel';
+  // Front UI strip (紧贴画芯，高斯模糊底色)
+  const uiStrip = document.createElement('aside');
+  uiStrip.className = `ui-strip blur-bg ${isLandscape ? 'horizontal-strip' : 'vertical-strip'}`;
+
   const patchState = changes => isWordedEntry
     ? patchWordedState(item.id, changes)
     : patchFavorite(item.id, changes);
@@ -1650,47 +1752,206 @@ function renderReverseCard(item, options = {}) {
   const moveTo = target => isWordedEntry
     ? changeWordedFolder(item, target)
     : moveFavorite(item, target);
-  const copy = createPromptControl(prompt, {
+
+  const isPixiv = item.source === 'pixiv' || String(item.id).startsWith('px_');
+  let pendingControls = null;
+
+  if (pending) {
+    // 待反推正面：[ ← ] 返回按钮
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'round-action-btn round-arrow-btn';
+    backBtn.innerHTML = BACK_SVG;
+    backBtn.title = isWordedEntry ? '返回有词区' : '返回原始收藏';
+    backBtn.setAttribute('aria-label', backBtn.title);
+    backBtn.onclick = event => { event.stopPropagation(); moveTo(isWordedEntry ? 'worded' : 'original'); };
+    uiStrip.append(backBtn);
+
+    // 待反推正面：[ ♥ ] 收藏按钮
+    const heartBtn = document.createElement('button');
+    heartBtn.type = 'button';
+    heartBtn.className = 'round-action-btn round-heart-btn active';
+    heartBtn.innerHTML = HEART_SVG;
+    heartBtn.title = '取消本地收藏';
+    heartBtn.setAttribute('aria-label', heartBtn.title);
+    heartBtn.onclick = event => { event.stopPropagation(); toggleFavorite(item); };
+    uiStrip.append(heartBtn);
+
+    // 待反推正面：[ 🔍 HD ] 查看高清大图
+    const hdBtn = document.createElement('button');
+    hdBtn.type = 'button';
+    hdBtn.className = 'round-action-btn round-hd-btn';
+    hdBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>`;
+    hdBtn.title = '查看高清大图';
+    hdBtn.setAttribute('aria-label', hdBtn.title);
+    hdBtn.onclick = event => {
+      event.stopPropagation();
+      openLightbox({...item, image_width: width, image_height: height}, card, image?.currentSrc || image?.src || imageUrl);
+    };
+    uiStrip.append(hdBtn);
+
+    // D / P 来源标识（点击翻面）
+    const sourceBadge = document.createElement('div');
+    sourceBadge.className = `source-badge-btn ${isPixiv ? 'source-pixiv' : 'source-danbooru'}`;
+    sourceBadge.textContent = isPixiv ? 'P' : 'D';
+    sourceBadge.title = `${isPixiv ? '来源：Pixiv' : '来源：Danbooru'} (点击翻面)`;
+    sourceBadge.onclick = event => { event.stopPropagation(); if (card._flipToggle) card._flipToggle(); else cardInner.classList.toggle('flipped'); };
+    uiStrip.append(sourceBadge);
+  } else {
+    // 有词区 / 已完成正面：[AI], [→], [♥], [🔍 HD]
+    const aiBtn = document.createElement('button');
+    aiBtn.type = 'button';
+    aiBtn.className = 'action-btn ai-btn';
+    aiBtn.textContent = 'AI';
+    aiBtn.title = '移回待反推重新反推';
+    aiBtn.onclick = event => { event.stopPropagation(); moveTo('pending'); };
+    uiStrip.append(aiBtn);
+
+    const arrowBtn = document.createElement('button');
+    arrowBtn.type = 'button';
+    arrowBtn.className = `action-btn arrow-btn ${folder === 'completed' ? 'active' : ''}`;
+    arrowBtn.innerHTML = RELEASE_SVG;
+    arrowBtn.title = folder === 'completed' ? '移回有词区' : '释放至已完成';
+    arrowBtn.onclick = event => { event.stopPropagation(); moveTo(folder === 'completed' ? 'worded' : 'completed'); };
+    uiStrip.append(arrowBtn);
+
+    const heartBtn = document.createElement('button');
+    heartBtn.type = 'button';
+    heartBtn.className = 'action-btn heart-btn active';
+    heartBtn.innerHTML = HEART_SVG;
+    heartBtn.title = '取消本地收藏';
+    heartBtn.setAttribute('aria-label', heartBtn.title);
+    heartBtn.onclick = event => { event.stopPropagation(); toggleFavorite(item); };
+    uiStrip.append(heartBtn);
+
+    const hdBtn = document.createElement('button');
+    hdBtn.type = 'button';
+    hdBtn.className = 'action-btn hd-btn';
+    hdBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>`;
+    hdBtn.title = '查看高清大图';
+    hdBtn.setAttribute('aria-label', hdBtn.title);
+    hdBtn.onclick = event => {
+      event.stopPropagation();
+      openLightbox({...item, image_width: width, image_height: height}, card, image?.currentSrc || image?.src || imageUrl);
+    };
+    uiStrip.append(hdBtn);
+
+    const sourceBadge = document.createElement('div');
+    sourceBadge.className = `source-badge-btn ${isPixiv ? 'source-pixiv' : 'source-danbooru'}`;
+    sourceBadge.textContent = isPixiv ? 'P' : 'D';
+    sourceBadge.title = `${isPixiv ? '来源：Pixiv' : '来源：Danbooru'} (点击翻面)`;
+    sourceBadge.onclick = event => { event.stopPropagation(); if (card._flipToggle) card._flipToggle(); else cardInner.classList.toggle('flipped'); };
+    uiStrip.append(sourceBadge);
+  }
+
+  frontFace.append(artworkContainer, uiStrip);
+
+  // ---------------- BACK FACE ----------------
+  const backFace = document.createElement('div');
+  backFace.className = `card-face card-back ${pending ? 'pending-back' : 'premium-back'}`;
+
+  const target = {
     kind: isWordedEntry ? 'worded' : 'favorite',
     id: item.id,
     preset: item.preset,
     imageUrl: image?.currentSrc || image?.src || imageUrl,
     summary: item.summary,
     onSaved: value => {
+      prompt = value;
       if (isWordedEntry) item.positive = value;
       else item.prompt = value;
       refreshGallery();
     }
-  });
-  if (!pending && !prompt) copy.hidden = true;
+  };
 
   if (pending) {
-    card.classList.add('pending-card');
+    // 1. 顶部控制：[ 创建提示词卡片 | ▼ ]
+    const copyControl = document.createElement('div');
+    copyControl.className = 'pending-copy-control';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'pending-copy-btn';
+    copyBtn.textContent = '创建提示词卡片';
+    copyBtn.title = '创建提示词卡片并保存至有词区';
+    const openCreateDialog = (e) => {
+      e.stopPropagation();
+      const createTarget = {
+        kind: isWordedEntry ? 'moveWorded' : 'fromPost',
+        post: item,
+        id: item.id,
+        preset: item.preset,
+        imageUrl: image?.currentSrc || image?.src || imageUrl,
+        summary: item.summary,
+        onSaved: value => {
+          prompt = value;
+          if (isWordedEntry) item.positive = value;
+          else item.prompt = value;
+          refreshGallery();
+        }
+      };
+      showPromptDialog(prompt, createTarget, val => {
+        prompt = val;
+        if (isWordedEntry) item.positive = val;
+        else item.prompt = val;
+        refreshGallery();
+      });
+    };
+    copyBtn.onclick = openCreateDialog;
+    const expandArrow = document.createElement('button');
+    expandArrow.type = 'button';
+    expandArrow.className = 'pending-copy-arrow';
+    expandArrow.textContent = '▼';
+    expandArrow.title = '展开查看/编辑提示词工作区';
+    expandArrow.onclick = openCreateDialog;
+    copyControl.append(copyBtn, expandArrow);
+
+    // 2. 预设、字符数这两行最右边放 [ AI直推 ]
+    const metaDirectRow = document.createElement('div');
+    metaDirectRow.className = 'pending-meta-direct-row';
+    const metaTextCol = document.createElement('div');
+    metaTextCol.className = 'pending-meta-text-col';
+    const presetLine = document.createElement('div');
+    presetLine.innerHTML = `预设：<strong class="pending-preset-label">${item.preset || presetConfig.defaultExpansion || '艺术导演扩写'}</strong>`;
+    const charsLine = document.createElement('div');
+    charsLine.className = 'chars-line';
+    charsLine.textContent = `字符：${promptCharacterCount(prompt)}`;
+    metaTextCol.append(presetLine, charsLine);
+
+    const directButton = document.createElement('button');
+    directButton.type = 'button';
+    directButton.className = 'pending-direct-btn';
+    directButton.textContent = directButtonLabel(item);
+    directButton.title = '调用已连接的 MCP Agent 直接反推这张图';
+    directButton.onclick = event => { event.stopPropagation(); runDirectReverse(item, pendingControls); };
+
+    metaDirectRow.append(metaTextCol, directButton);
+
+    // 3. 状态灯与队列（在 AI直推 正下方）
+    const statusQueueRow = document.createElement('div');
+    statusQueueRow.className = 'pending-status-queue';
+
     const status = document.createElement('div');
-    status.className = 'reverse-status';
+    status.className = 'pending-status-lamp';
     const failed = item.reverseStatus === 'failed' || item.directStatus === 'failed' || item.cacheStatus === 'error';
     const done = Boolean(prompt) && !failed && item.autoEnabled === false;
     const lamp = document.createElement('span');
+    lamp.className = `status-dot reverse-lamp ${failed ? 'red lamp-error' : done ? 'green lamp-done' : 'lamp-waiting'}`;
     const label = document.createElement('span');
+    label.className = 'status-text';
     const setStatusText = () => {
-      const currentFailed = item.reverseStatus === 'failed' || item.directStatus === 'failed' || item.cacheStatus === 'error';
-      const currentDone = Boolean(isWordedEntry ? item.positive : item.prompt) && !currentFailed && item.autoEnabled === false;
-      lamp.className = `reverse-lamp ${currentFailed ? 'red' : currentDone ? 'green' : ''}`;
-      label.textContent = currentFailed ? '错误' : currentDone ? '完成' : (item.reverseStatus === 'processing' || item.directStatus === 'processing' ? '处理中' : '等待');
-      status.classList.toggle('retryable', currentFailed);
+      const curFailed = item.reverseStatus === 'failed' || item.directStatus === 'failed' || item.cacheStatus === 'error';
+      const curDone = Boolean(isWordedEntry ? item.positive : item.prompt) && !curFailed && item.autoEnabled === false;
+      lamp.className = `status-dot reverse-lamp ${curFailed ? 'red lamp-error' : curDone ? 'green lamp-done' : 'lamp-waiting'}`;
+      label.textContent = curFailed ? '错误' : curDone ? '完成' : (item.reverseStatus === 'processing' || item.directStatus === 'processing' ? '处理中' : '等待');
+      status.classList.toggle('retryable', curFailed);
     };
     setStatusText();
-    const cacheReady = isWordedEntry ? Boolean(item.imageExt) : item.cacheStatus === 'ready';
-    status.title = item.cacheStatus === 'error' ? `缓存错误：${item.cacheError || '点击重试'}` :
-      item.reverseStatus === 'failed' || item.directStatus === 'failed' ? `反推错误：${item.reverseError || '点击重试'}` :
-      !cacheReady ? '等待高清图缓存' : item.reverseStatus === 'processing' ? '正在反推（旧提示词已保留）' :
-      item.autoEnabled !== false && prompt ? '等待重新反推，旧提示词暂时保留' : label.textContent;
     status.append(lamp, label);
+
     if (failed) {
       status.setAttribute('role', 'button');
       status.tabIndex = 0;
-      status.setAttribute('aria-label', `${status.title}，点击重试`);
-      const retry = async () => {
+      status.onclick = async () => {
         try {
           const changes = !isWordedEntry && item.cacheStatus === 'error' ? {retryCache: true} : {retryReverse: true};
           const updated = await patchState(changes);
@@ -1699,22 +1960,17 @@ function renderReverseCard(item, options = {}) {
           if (changes.retryReverse) refreshGallery();
         } catch (error) { toast(`重试失败：${error.message}`); }
       };
-      status.onclick = retry;
-      status.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); retry(); } };
     }
 
-    const queue = document.createElement('div');
-    queue.className = 'reverse-queue';
-    const queueLabel = document.createElement('span');
-    queueLabel.textContent = '队列';
+    const queueWrap = document.createElement('div');
+    queueWrap.className = 'pending-queue-wrap';
+    const queueText = document.createElement('span');
+    queueText.textContent = '队列';
     const queueButton = document.createElement('button');
     queueButton.type = 'button';
-    queueButton.className = `queue-button ${item.autoEnabled !== false ? 'active' : ''}`;
+    queueButton.className = `queue-badge-btn ${item.autoEnabled !== false ? 'active' : ''}`;
     queueButton.textContent = item.autoEnabled !== false ? String(initialQueueOrder || '·') : '+';
-    queueButton.setAttribute('aria-pressed', String(item.autoEnabled !== false));
-    queueButton.title = item.autoEnabled !== false ? `队列第 ${initialQueueOrder || '?'} 位，点击移出` :
-      prompt ? '重新反推：成功后替换旧提示词，失败保留旧提示词' : '点击加入反推队列';
-    queueButton.setAttribute('aria-label', queueButton.title);
+    queueButton.title = item.autoEnabled !== false ? `队列第 ${initialQueueOrder || '?'} 位，点击移出` : '点击加入反推队列';
     queueButton.onclick = async event => {
       event.stopPropagation();
       queueButton.disabled = true;
@@ -1724,143 +1980,208 @@ function renderReverseCard(item, options = {}) {
         refreshGallery();
       } catch (error) { queueButton.disabled = false; toast(`更新队列失败：${error.message}`); }
     };
-    queue.append(queueLabel, queueButton);
+    queueWrap.append(queueText, queueButton);
+    statusQueueRow.append(status, queueWrap);
 
-    const picker = document.createElement('select');
-    picker.className = 'preset-picker';
-    picker.title = '扩写预设';
-    picker.setAttribute('aria-label', '扩写预设');
-    for (const preset of expansionNames()) picker.append(new Option(`扩写：${preset}`, preset));
-    if (item.preset && !expansionNames().includes(item.preset)) picker.add(new Option(`${item.preset}（已移除）`, item.preset));
-    picker.value = item.preset || presetConfig.defaultExpansion;
-    picker.onchange = async () => {
-      const previous = item.preset;
-      try {
-        const updated = await patchState({preset: picker.value});
-        Object.assign(item, updated || {});
-      } catch (error) { picker.value = previous || presetConfig.defaultExpansion; toast(`扩写预设保存失败：${error.message}`); }
-    };
+    // 4. 扩写预设栏：整栏直接点击展开（Custom Dropdown）
+    const presetDropdownWrap = document.createElement('div');
+    presetDropdownWrap.className = 'preset-dropdown-wrap';
 
-    const directButton = document.createElement('button');
-    directButton.type = 'button';
-    directButton.className = 'direct-reverse-button';
-    directButton.textContent = directButtonLabel(item);
-    directButton.title = '调用已连接的 MCP Agent 直接反推这张图';
-    directButton.onclick = event => { event.stopPropagation(); runDirectReverse(item, pendingControls); };
+    const presetBarClickable = document.createElement('div');
+    presetBarClickable.className = 'preset-bar-clickable';
+    presetBarClickable.tabIndex = 0;
+    presetBarClickable.setAttribute('role', 'button');
+    presetBarClickable.setAttribute('aria-expanded', 'false');
 
-    const actions = document.createElement('div');
-    actions.className = 'reverse-actions';
-    actions.append(status, queue, picker, directButton);
-    const instruction = document.createElement('input');
-    instruction.className = 'reverse-instruction';
-    instruction.type = 'text';
-    instruction.maxLength = 4000;
-    instruction.placeholder = '额外要求（与预设一起交给 AI）';
-    instruction.setAttribute('aria-label', '额外反推要求');
-    instruction.value = item.customInstruction || '';
-    instruction.onchange = async () => {
-      try { const updated = await patchState({customInstruction: instruction.value}); Object.assign(item, updated || {}); toast('额外要求已保存'); }
-      catch (error) { toast('保存失败：' + error.message); }
-    };
-    pendingControls = {kind, card, image, status, lamp, label, queueButton, directButton, displayQueueOrder: initialQueueOrder};
-    panel.append(copy, actions, instruction);
-  } else {
-    panel.append(copy);
-    if (isWordedOrCompleted) {
-      const panelActions = document.createElement('div');
-      panelActions.className = `panel-actions-bar ${isLandscape ? 'horizontal' : 'vertical'}`;
-      const aiButton = document.createElement('button');
-      aiButton.type = 'button';
-      aiButton.className = 'ai-button';
-      aiButton.textContent = 'AI';
-      aiButton.title = '移回待反推重新反推';
-      aiButton.onclick = event => { event.stopPropagation(); moveTo('pending'); };
-      const completedButton = document.createElement('button');
-      completedButton.type = 'button';
-      completedButton.className = `completed-button ${folder === 'completed' ? 'active' : ''}`;
-      completedButton.innerHTML = RELEASE_SVG;
-      completedButton.title = folder === 'completed' ? '移回有词区' : '释放至已完成';
-      completedButton.onclick = event => { event.stopPropagation(); moveTo(folder === 'completed' ? 'worded' : 'completed'); };
-      panelActions.append(aiButton, completedButton);
-      if (!isWordedEntry) {
-        const favoriteButton = document.createElement('button');
-        favoriteButton.type = 'button';
-        favoriteButton.className = 'favorite-button active';
-        favoriteButton.dataset.favoriteId = item.id;
-        favoriteButton.innerHTML = HEART_SVG;
-        favoriteButton.title = '取消本地收藏';
-        favoriteButton.onclick = event => { event.stopPropagation(); toggleFavorite(item); };
-        panelActions.append(favoriteButton);
-      }
-      panel.append(panelActions);
+    const currentPresetName = item.preset || presetConfig.defaultExpansion || '艺术导演扩写';
+    const presetBarText = document.createElement('span');
+    presetBarText.className = 'preset-bar-text';
+    presetBarText.textContent = `扩写：${currentPresetName}`;
+
+    const presetArrowSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    presetArrowSvg.setAttribute('class', 'preset-bar-arrow');
+    presetArrowSvg.setAttribute('width', '14');
+    presetArrowSvg.setAttribute('height', '14');
+    presetArrowSvg.setAttribute('viewBox', '0 0 24 24');
+    presetArrowSvg.setAttribute('fill', 'none');
+    presetArrowSvg.setAttribute('stroke', 'currentColor');
+    presetArrowSvg.setAttribute('stroke-width', '2.5');
+    presetArrowSvg.setAttribute('stroke-linecap', 'round');
+    presetArrowSvg.setAttribute('stroke-linejoin', 'round');
+    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    polyline.setAttribute('points', '6 9 12 15 18 9');
+    presetArrowSvg.append(polyline);
+
+    presetBarClickable.append(presetBarText, presetArrowSvg);
+
+    const presetMenuList = document.createElement('div');
+    presetMenuList.className = 'preset-menu-list';
+    presetMenuList.hidden = true;
+
+    for (const name of expansionNames()) {
+      const optionItem = document.createElement('div');
+      optionItem.className = `preset-option-item ${name === currentPresetName ? 'selected' : ''}`;
+      optionItem.dataset.value = name;
+      optionItem.textContent = `扩写：${name}`;
+      presetMenuList.append(optionItem);
     }
+
+    presetBarClickable.onclick = (e) => {
+      e.stopPropagation();
+      const isHidden = presetMenuList.hidden;
+      presetMenuList.hidden = !isHidden;
+      presetBarClickable.classList.toggle('open', !presetMenuList.hidden);
+      presetBarClickable.setAttribute('aria-expanded', String(!presetMenuList.hidden));
+    };
+
+    presetMenuList.onclick = async (e) => {
+      e.stopPropagation();
+      const opt = e.target.closest('.preset-option-item');
+      if (!opt) return;
+      const val = opt.dataset.value;
+      presetBarText.textContent = `扩写：${val}`;
+      const lbl = presetLine.querySelector('strong');
+      if (lbl) lbl.textContent = val;
+      presetMenuList.querySelectorAll('.preset-option-item').forEach(i => i.classList.remove('selected'));
+      opt.classList.add('selected');
+      presetMenuList.hidden = true;
+      presetBarClickable.classList.remove('open');
+      presetBarClickable.setAttribute('aria-expanded', 'false');
+      try {
+        const updated = await patchState({preset: val});
+        Object.assign(item, updated || {});
+        toast(`已切换扩写预设：${val}`);
+      } catch (err) { toast(`扩写预设保存失败：${err.message}`); }
+    };
+
+    document.addEventListener('click', (e) => {
+      if (!presetDropdownWrap.contains(e.target)) {
+        presetMenuList.hidden = true;
+        presetBarClickable.classList.remove('open');
+        presetBarClickable.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    presetDropdownWrap.append(presetBarClickable, presetMenuList);
+
+    // 5. 额外要求输入框
+    const instructionWrap = document.createElement('div');
+    instructionWrap.className = 'pending-instruction-wrap';
+    const instructionInput = document.createElement('input');
+    instructionInput.type = 'text';
+    instructionInput.className = 'pending-instruction-input';
+    instructionInput.maxLength = 4000;
+    instructionInput.placeholder = '额外要求（与预设一起交给 AI）';
+    instructionInput.value = item.customInstruction || '';
+    instructionInput.onchange = async () => {
+      try {
+        const updated = await patchState({customInstruction: instructionInput.value});
+        Object.assign(item, updated || {});
+        toast('额外要求已保存');
+      } catch (error) { toast('保存失败：' + error.message); }
+    };
+    instructionWrap.append(instructionInput);
+
+    pendingControls = {kind, card, image, status, lamp, label, queueButton, directButton, displayQueueOrder: initialQueueOrder};
+
+    backFace.append(copyControl, metaDirectRow, statusQueueRow, presetDropdownWrap, instructionWrap);
+  } else {
+    // Worded & Completed Back Face: 高级感卡背（顶部：提示词 | 复 译 ⤢；下方全是提示词框）
+    const backTopRow = document.createElement('div');
+    backTopRow.className = 'back-top-row';
+
+    const backTitle = document.createElement('span');
+    backTitle.className = 'back-title';
+    backTitle.textContent = '提示词';
+
+    const backBtnCluster = document.createElement('div');
+    backBtnCluster.className = 'back-btn-cluster';
+
+    // [ 复 ] Tool
+    const copyTool = document.createElement('button');
+    copyTool.type = 'button';
+    copyTool.className = 'mini-tool-btn copy-tool';
+    copyTool.textContent = '复';
+    copyTool.title = '复制提示词';
+    copyTool.onclick = async (e) => {
+      e.stopPropagation();
+      try {
+        await copyTextToClipboard(promptFullBox.textContent.trim() || prompt);
+        toast('📋 [复] 已复制提示词');
+      } catch (err) { toast(`复制失败：${err.message}`); }
+    };
+
+    // [ 译 ] Tool (打开提示词栏并直接展开翻译)
+    const transTool = document.createElement('button');
+    transTool.type = 'button';
+    transTool.className = 'mini-tool-btn trans-tool';
+    transTool.textContent = '译';
+    transTool.title = '打开提示词栏并直接展开翻译对照';
+    transTool.onclick = (e) => {
+      e.stopPropagation();
+      showPromptDialog(promptFullBox.textContent.trim() || prompt, target, val => {
+        prompt = val;
+        promptFullBox.textContent = val;
+        if (isWordedEntry) item.positive = val;
+        else item.prompt = val;
+      }, { expandTranslation: true });
+    };
+
+    // [ ⤢ ] Tool (展开提示词大工作区)
+    const expandTool = document.createElement('button');
+    expandTool.type = 'button';
+    expandTool.className = 'mini-tool-btn expand-tool';
+    expandTool.title = '展开提示词工作区';
+    expandTool.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>`;
+    expandTool.onclick = (e) => {
+      e.stopPropagation();
+      showPromptDialog(promptFullBox.textContent.trim() || prompt, target, val => {
+        prompt = val;
+        promptFullBox.textContent = val;
+        if (isWordedEntry) item.positive = val;
+        else item.prompt = val;
+      });
+    };
+
+    backBtnCluster.append(copyTool, transTool, expandTool);
+    backTopRow.append(backTitle, backBtnCluster);
+
+    // Full Prompt Box Below
+    const promptFullBox = document.createElement('div');
+    promptFullBox.className = 'prompt-full-box';
+    promptFullBox.contentEditable = 'true';
+    promptFullBox.spellcheck = false;
+    promptFullBox.textContent = prompt || '';
+    promptFullBox.addEventListener('blur', async () => {
+      const newVal = promptFullBox.textContent.trim();
+      if (newVal !== prompt) {
+        prompt = newVal;
+        if (isWordedEntry) item.positive = newVal;
+        else item.prompt = newVal;
+        try {
+          await patchState({[isWordedEntry ? 'positive' : 'prompt']: newVal});
+          toast('提示词已同步保存');
+        } catch (err) { toast(`保存失败：${err.message}`); }
+      }
+    });
+
+    backFace.append(backTopRow, promptFullBox);
   }
 
-  card.append(picture, panel);
+  cardInner.append(cardHolo, frontFace, backFace);
+  cardWrapper.append(cardInner);
+  card.append(cardWrapper);
+
+  // 绑定 3D 鼠标微视差及点击翻面事件
+  attach3DCardTilt(card, cardWrapper);
+  attach3DCardFlip(card, cardInner);
+
   card._updateFavoriteState = next => { Object.assign(item, next || {}); updatePendingControls(item, pendingControls); };
   if (pendingControls) updatePendingControls(item, pendingControls);
 
-  const showSource = !isWordedEntry || ['pixiv', 'danbooru', 'p', 'd'].includes(String(item.source || '').toLowerCase());
-  if (showSource) {
-    const isPixiv = item.source === 'pixiv' || String(item.id).startsWith('px_');
-    const sourceBadge = document.createElement('span');
-    sourceBadge.className = `source-badge ${isPixiv ? 'source-pixiv' : 'source-danbooru'}`;
-    sourceBadge.textContent = isPixiv ? 'P' : 'D';
-    sourceBadge.title = isPixiv ? '来源：Pixiv' : '来源：Danbooru';
-    picture.append(sourceBadge);
-  }
-  if (!isWordedEntry || item.rating) {
-    const badge = document.createElement('span');
-    badge.className = `badge rating-${item.rating || 'g'}`;
-    badge.title = `${ratingNames[item.rating] || item.rating || '全年龄'}`;
-    picture.append(badge);
-  }
-
-  if (pending) {
-    const pictureActions = document.createElement('div');
-    pictureActions.className = `pending-picture-actions${isWordedEntry ? ' worded-picture-actions' : ''}`;
-    const backBtn = document.createElement('button');
-    backBtn.type = 'button';
-    backBtn.className = 'pending-back-button';
-    backBtn.innerHTML = BACK_SVG;
-    backBtn.title = isWordedEntry ? '返回有词区' : '返回原始收藏';
-    backBtn.setAttribute('aria-label', backBtn.title);
-    backBtn.onclick = event => { event.stopPropagation(); moveTo(isWordedEntry ? 'worded' : 'original'); };
-    pictureActions.append(backBtn);
-    if (isWordedEntry) {
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'worded-picture-delete';
-      remove.textContent = '×';
-      remove.title = '删除这张提示词卡片';
-      remove.setAttribute('aria-label', remove.title);
-      remove.onclick = async event => {
-        event.stopPropagation();
-        if (!confirm('确定删除这张提示词卡片及本地图片？')) return;
-        try {
-          const response = await fetch(`/api/worded/entries/${encodeURIComponent(item.id)}`, {method: 'DELETE'});
-          if (!response.ok) throw Error(`HTTP ${response.status}`);
-          loadWordedGallery(true);
-          toast('已删除卡片');
-        } catch (error) { toast(`删除失败：${error.message}`); }
-      };
-      pictureActions.append(remove);
-    } else {
-      const favoriteButton = document.createElement('button');
-      favoriteButton.type = 'button';
-      favoriteButton.className = 'favorite-button active';
-      favoriteButton.dataset.favoriteId = item.id;
-      favoriteButton.innerHTML = HEART_SVG;
-      favoriteButton.title = '取消本地收藏';
-      favoriteButton.onclick = event => { event.stopPropagation(); toggleFavorite(item); };
-      pictureActions.append(favoriteButton);
-    }
-    picture.append(pictureActions);
-  }
-
   card.oncontextmenu = event => isWordedEntry ? showManualMenu(event, item) : showMenu(event, item);
-  registerShareCard(card, item, isWordedEntry ? 'worded' : 'favorite');
-  appendRenderedCard(card);
+  const cardWeight = Math.max(0.6, Math.min(2.5, (height / width) + (isLandscape ? 0.2 : 0)));
+  appendRenderedCard(card, cardWeight);
 }
 function promptCharacterCount(value) {
   // Count visible characters while excluding punctuation, symbols, whitespace and line breaks.
@@ -1989,7 +2310,7 @@ async function persistEditedPrompt(target, prompt) {
     if (!response.ok) throw Error(result.error || `HTTP ${response.status}`);
   }
 }
-function showPromptDialog(prompt, target, onSaved) {
+function showPromptDialog(prompt, target, onSaved, options = {}) {
   let dialog = document.querySelector('#promptDialog');
   if (!dialog) {
     const shade = document.createElement('div'); shade.className = 'prompt-shade'; shade.hidden = true;
@@ -2225,6 +2546,11 @@ function showPromptDialog(prompt, target, onSaved) {
   document.querySelector('.prompt-shade').hidden = false;
   if (!dialog.open) dialog.show(); // Non-modal so translation extensions can render above the viewer.
   dialog.querySelector('.prompt-dialog-text').scrollTop = 0;
+  if (options.expandTranslation) {
+    requestAnimationFrame(() => {
+      dialog.querySelector('.prompt-dialog-buttons button:nth-child(2)')?.click();
+    });
+  }
 }
 function openLightbox(post, card, imageUrl = '') {
   previewPost = post;
@@ -2274,6 +2600,16 @@ document.addEventListener('keydown', event => {
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z' && !event.target.closest('input, textarea, [contenteditable="true"]')) {
     event.preventDefault();
     undoLastAction();
+  }
+  if (event.code === 'Space' && !event.target.closest('input, textarea, [contenteditable="true"]')) {
+    const cards = document.querySelectorAll('#gallery .reverse-card.3d-card');
+    if (cards.length > 0) {
+      event.preventDefault();
+      cards.forEach(card => {
+        if (card._flipToggle) card._flipToggle();
+        else card.querySelector('.card-inner')?.classList.toggle('flipped');
+      });
+    }
   }
 });
 let activeManual = null;
@@ -3558,42 +3894,190 @@ function renderWordedCard(item, options = {}) {
   });
 }
 function renderMetadataCard(item, collection = 'metadata') {
-  if(collection==='worded')return renderWordedCard(item);
+  if (collection === 'worded') return renderWordedCard(item);
+
   const card = document.createElement('article');
-  card.className = `reverse-card metadata-card ${item.source === '手写' && !item.imageExt ? 'text-only' : item.width > item.height ? 'landscape' : 'portrait'}`;
-  const picture = document.createElement('div'); picture.className = 'reverse-picture';
-  const img = document.createElement('img'); img.loading = 'lazy'; img.alt = item.name; if(item.imageExt || item.source !== '手写') img.src = `/api/${collection}/images/${encodeURIComponent(item.id)}`;
-  if(img.src && (item.imageExt || item.source !== '手写')) { img.onclick = () => openLightbox({image_width:item.width,image_height:item.height},card,img.src); picture.append(img); }
-  else { const summary=document.createElement('span');summary.className='text-summary';summary.textContent=item.summary || item.positive.slice(0,30);picture.append(summary); }
-  if(item.imageExt || item.source !== '手写') {
-    if (item.width > item.height) picture.style.height = `${Math.min(58,item.height/item.width*100)}%`;
-    else picture.style.width = `${Math.min(58,item.width/item.height*100)}%`;
-  } else picture.style.height='60%';
-  const panel = document.createElement('div'); panel.className = 'reverse-panel';
-  const line = (title,value) => { const el = document.createElement('div'); el.className='metadata-line'; const strong=document.createElement('strong'); strong.textContent=title+'：'; const span=document.createElement('span');span.textContent=value || '未识别';el.title=value || '未识别';el.append(strong,span);panel.append(el); };
-  if(item.source !== '手写') { line('底模',item.model); line('参数',[item.positive && `正向：${item.positive}`,item.negative && `反向：${item.negative}`].filter(Boolean).join(' / ') || item.source);
-  const details=document.createElement('details'); details.className='metadata-loras';
-  const summary=document.createElement('summary'); summary.textContent=`LoRA（${item.loras?.length || 0}）`; details.append(summary);
-  for(const lora of item.loras || []) { const el=document.createElement('div'); el.textContent=`${lora.name}${lora.strength == null ? '' : ' · '+lora.strength}`; details.append(el); }
-  if(!item.loras?.length) { const el=document.createElement('div');el.textContent='未识别';details.append(el); }
-  panel.append(details);
-  line('生图参数',[['CFG',item.cfg],['步数',item.steps],['采样器',item.sampler],['调度器',item.scheduler],['种子',item.seed],['降噪',item.denoise]].map(([k,v])=>`${k} ${v || '—'}`).join(' · '));
+  const isLandscape = item.width > item.height;
+  card.className = `reverse-card metadata-card 3d-card ${item.source === '手写' && !item.imageExt ? 'text-only' : isLandscape ? 'landscape' : 'portrait'}`;
+  card.dataset.reverseId = String(item.id);
+
+  const imageUrl = item.imageExt || item.source !== '手写'
+    ? `/api/${collection}/images/${encodeURIComponent(item.id)}`
+    : '';
+
+  const cardWrapper = document.createElement('div');
+  cardWrapper.className = 'card-wrapper';
+  if (imageUrl) {
+    cardWrapper.style.setProperty('--card-bg-img', `url("${imageUrl}")`);
   }
-  const actions=document.createElement('div');actions.className='metadata-actions';
-  actions.append(createPromptControl(item.positive, {kind:collection, id:item.id, preset:item.preset, imageUrl:item.imageExt ? `/api/${collection}/images/${encodeURIComponent(item.id)}` : '', onSaved: value => { item.positive = value; }}));
-  if(item.source === '手写') {
-    const paste=document.createElement('button');paste.textContent='粘贴图片';paste.title='点击后按 Ctrl+V，也可直接授权读取剪贴板';
-    const upload=async(file)=>{try{const bitmap=await createImageBitmap(file);const url=`/api/${collection}/images/${encodeURIComponent(item.id)}?width=${bitmap.width}&height=${bitmap.height}`;bitmap.close();
-      const res=await fetch(url,{method:'PUT',headers:{'Content-Type':file.type},body:file});const data=await res.json();if(!res.ok)throw Error(data.error);loadWordedGallery(true);}catch(e){toast('粘贴失败：'+e.message)}};
-    const chooser=document.createElement('input');chooser.type='file';chooser.accept='image/png,image/jpeg,image/webp';chooser.hidden=true;
-    chooser.onchange=async()=>{if(chooser.files[0])await upload(chooser.files[0]);chooser.value=''};
-    paste.onclick=async()=>{paste.focus();try{if(!navigator.clipboard?.read)throw Error('unsupported');
-      const entries=await navigator.clipboard.read();for(const entry of entries){const type=entry.types.find(x=>x.startsWith('image/'));if(type){await upload(await entry.getType(type));return}}
-    }catch{}chooser.click()};
-    paste.onpaste=e=>{const file=[...e.clipboardData.files].find(x=>x.type.startsWith('image/'));if(file){e.preventDefault();upload(file)}};actions.append(paste,chooser);
+
+  const cardInner = document.createElement('div');
+  cardInner.className = 'card-inner';
+
+  const cardHolo = document.createElement('div');
+  cardHolo.className = 'card-holo';
+  cardHolo.style.display = 'none'; // 闪卡默认关闭
+
+  // ---------------- FRONT FACE: 纯粹满幅画芯（无侧边 UI 栏） ----------------
+  const frontFace = document.createElement('div');
+  frontFace.className = 'card-face card-front full-bleed-front';
+
+  const artworkContainer = document.createElement('div');
+  artworkContainer.className = 'artwork-container full-artwork';
+
+  if (imageUrl) {
+    const img = document.createElement('img');
+    img.className = 'art-img';
+    img.loading = 'lazy';
+    img.alt = item.name || '元数据图片';
+    img.src = imageUrl;
+    if (item.width && item.height) {
+      img.style.aspectRatio = `${item.width} / ${item.height}`;
+    }
+    img.ondblclick = () => openLightbox({image_width: item.width, image_height: item.height}, card, img.src);
+    const specular = document.createElement('div');
+    specular.className = 'art-specular';
+    artworkContainer.append(img, specular);
+
+    // Floating HD Button in Top-Left Corner
+    const floatingHdBtn = document.createElement('button');
+    floatingHdBtn.type = 'button';
+    floatingHdBtn.className = 'floating-hd-badge';
+    floatingHdBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>`;
+    floatingHdBtn.title = '查看高清大图';
+    floatingHdBtn.onclick = (e) => {
+      e.stopPropagation();
+      openLightbox({image_width: item.width, image_height: item.height}, card, imageUrl);
+    };
+    artworkContainer.append(floatingHdBtn);
+  } else {
+    const summary = document.createElement('span');
+    summary.className = 'text-summary';
+    summary.textContent = item.summary || item.positive?.slice(0, 30) || '暂无图片';
+    artworkContainer.append(summary);
   }
-  const remove=document.createElement('button');remove.textContent='删除';remove.onclick=async()=>{if(!confirm('删除此卡片及本地图片？'))return;const url=collection==='worded'?`/api/worded/entries/${encodeURIComponent(item.id)}`:`/api/metadata/images/${encodeURIComponent(item.id)}`;const res=await fetch(url,{method:'DELETE'});if(res.ok)(collection==='worded'?loadWordedGallery():loadMetadataGallery());else toast('删除失败');};actions.append(remove);panel.append(actions);
-  card.append(picture,panel);appendRenderedCard(card);
+
+  frontFace.append(artworkContainer);
+
+  // ---------------- BACK FACE: 5 层次（底模、生图参数、正面提示词、详细参数、删除按钮） ----------------
+  const backFace = document.createElement('div');
+  backFace.className = 'card-face card-back metadata-back';
+
+  // 1. 底模 (Model)
+  const modelSection = document.createElement('div');
+  modelSection.className = 'meta-section';
+  const modelTitle = document.createElement('span');
+  modelTitle.className = 'meta-label-title';
+  modelTitle.textContent = '底模 (Model)';
+  const modelBadge = document.createElement('div');
+  modelBadge.className = 'meta-model-badge';
+  modelBadge.textContent = item.model || '未识别';
+  modelBadge.title = item.model || '未识别';
+  modelSection.append(modelTitle, modelBadge);
+  backFace.append(modelSection);
+
+  // 2. 生图参数 (Parameters)
+  const paramsSection = document.createElement('div');
+  paramsSection.className = 'meta-section';
+  const paramsTitle = document.createElement('span');
+  paramsTitle.className = 'meta-label-title';
+  paramsTitle.textContent = '生图参数 (Parameters)';
+  const paramsGrid = document.createElement('div');
+  paramsGrid.className = 'meta-params-grid';
+  const paramItems = [
+    ['Steps', item.steps || '—'],
+    ['Sampler', item.sampler || '—'],
+    ['CFG', item.cfg || '—'],
+    ['Size', item.width && item.height ? `${item.width}×${item.height}` : '—'],
+    ['Seed', item.seed || '—'],
+    ['Denoise', item.denoise || item.scheduler || '—']
+  ];
+  for (const [k, v] of paramItems) {
+    const div = document.createElement('div');
+    div.className = 'param-item';
+    div.innerHTML = `<span class="k">${k}:</span> <span class="v">${v}</span>`;
+    paramsGrid.append(div);
+  }
+  paramsSection.append(paramsTitle, paramsGrid);
+  backFace.append(paramsSection);
+
+  // 3. 正面提示词（可展开的框，默认折叠）
+  const promptDetails = document.createElement('details');
+  promptDetails.className = 'meta-fold-details';
+  const promptSummary = document.createElement('summary');
+  promptSummary.className = 'meta-fold-summary';
+  promptSummary.innerHTML = `<span>正面提示词 (Prompt)</span><span class="fold-indicator">▼</span>`;
+  const promptContent = document.createElement('div');
+  promptContent.className = 'meta-fold-content';
+  promptContent.contentEditable = 'true';
+  promptContent.spellcheck = false;
+  promptContent.textContent = item.positive || '无正向提示词';
+  promptDetails.append(promptSummary, promptContent);
+  backFace.append(promptDetails);
+
+  // 4. 详细参数（也是可展开默认折叠，展开显示所有）
+  const rawDetails = document.createElement('details');
+  rawDetails.className = 'meta-fold-details';
+  const rawSummary = document.createElement('summary');
+  rawSummary.className = 'meta-fold-summary';
+  rawSummary.innerHTML = `<span>详细参数 (All Raw Metadata)</span><span class="fold-indicator">▼</span>`;
+  const rawContent = document.createElement('div');
+  rawContent.className = 'meta-fold-content meta-raw-box';
+  const rawParts = [];
+  if (item.negative) rawParts.push(`反向提示词：\n${item.negative}\n`);
+  if (item.loras?.length) rawParts.push(`LoRA：\n${item.loras.map(l => `${l.name} (${l.strength ?? 1.0})`).join('\n')}\n`);
+  if (item.rawMetadata) {
+    try {
+      rawParts.push(typeof item.rawMetadata === 'string' ? item.rawMetadata : JSON.stringify(item.rawMetadata, null, 2));
+    } catch { rawParts.push(String(item.rawMetadata)); }
+  } else {
+    rawParts.push(JSON.stringify({
+      source: item.source,
+      model: item.model,
+      sampler: item.sampler,
+      scheduler: item.scheduler,
+      cfg: item.cfg,
+      steps: item.steps,
+      seed: item.seed,
+      denoise: item.denoise
+    }, null, 2));
+  }
+  rawContent.textContent = rawParts.join('\n') || '无详细元数据';
+  rawDetails.append(rawSummary, rawContent);
+  backFace.append(rawDetails);
+
+  // 5. 删除按钮 (Delete Button)
+  const deleteWrap = document.createElement('div');
+  deleteWrap.className = 'meta-delete-wrap';
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'meta-delete-btn';
+  deleteBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg><span>删除此条元数据</span>`;
+  deleteBtn.onclick = async (e) => {
+    e.stopPropagation();
+    if (!confirm('删除此卡片及本地图片？')) return;
+    const url = collection === 'worded' ? `/api/worded/entries/${encodeURIComponent(item.id)}` : `/api/metadata/images/${encodeURIComponent(item.id)}`;
+    const res = await fetch(url, {method: 'DELETE'});
+    if (res.ok) {
+      if (collection === 'worded') loadWordedGallery();
+      else loadMetadataGallery();
+      toast('已删除卡片及元数据');
+    } else {
+      toast('删除失败');
+    }
+  };
+  deleteWrap.append(deleteBtn);
+  backFace.append(deleteWrap);
+
+  cardInner.append(cardHolo, frontFace, backFace);
+  cardWrapper.append(cardInner);
+  card.append(cardWrapper);
+
+  attach3DCardTilt(card, cardWrapper);
+  attach3DCardFlip(card, cardInner);
+
+  const metaWeight = Math.max(0.6, Math.min(2.5, (Number(item.height) || 1) / (Number(item.width) || 1)));
+  appendRenderedCard(card, metaWeight);
 }
 document.querySelector('#manualWorded').onclick=()=>showPromptDialog('',{kind:'create'});
 async function uploadFavoriteImage(id,file) {
@@ -3626,7 +4110,11 @@ document.addEventListener('drop',event=>{
   if(event.target.closest?.('.prompt-workspace'))return;
   showPromptDialog('',{kind:'create',imageFile:[...event.dataTransfer.files].find(f=>f.type.startsWith('image/'))});
 });
-setInterval(()=>{if(mode==='metadata' && !document.activeElement?.matches('input,textarea'))loadMetadataGallery()},10000);
+setInterval(() => {
+  if (mode === 'metadata' && !document.activeElement?.matches('input,textarea') && !document.querySelector('#gallery .card-inner.flipped')) {
+    loadMetadataGallery();
+  }
+}, 15000);
 document.querySelector('#metadataFiles').onchange=async event=>{
   const files=[...event.target.files]; let success=0;
   for(const file of files){try{const res=await fetch(`/api/metadata/images?name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'Content-Type':'image/png'},body:file});const body=await res.json();if(!res.ok)throw Error(body.error || `HTTP ${res.status}`);success++;}catch(e){toast(`${file.name}：${e.message}`)}}
