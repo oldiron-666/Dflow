@@ -1,0 +1,169 @@
+
+## 1. 顶级海报设计四大构成学派 
+1. **瑞士国际主义平面风格 (Swiss International Typographic Style)**：
+   - 严苛的数学网格系统（Grid System）、非对称排版（Asymmetrical Layout）、客观无衬线字体（Helvetica / Akzidenz-Grotesk）、大面积干净留白与高反差视觉锚点。
+2. **包豪斯几何构成主义 (Bauhaus Constructivism)**：
+   - 基础几何形（圆形、正方形、45度对角倾斜三角）、原色调色板（三原色：红、黄、蓝+黑白）、机械美学与斜向动态对角线。
+3. **新野兽派海报排版 (Neo-Brutalist Key Art)**：
+   - 超粗黑体描边（Heavy Stroke）、原始未加工的粗糙文本框、高饱和撞色、反精致化、大字报式视觉压迫力。
+4. **迷幻复古丝网印刷 (Psychedelic & Silkscreen Vintage)**：
+   - 60-70年代嬉皮士流线字体、摩尔纹干涉条纹、多重叠印手工感、做旧颗粒感与渐变晕染。
+
+---
+
+## 2. 印刷工艺与材质肌理方程 (Print Textures & Halftone Physics)
+
+在海报提示词中指定印刷工艺，能瞬间去除AI生成的“平庸光滑数字感”：
+- **孔版丝网印刷与错版（Silkscreen Misregistration）**：`Authentic screen-printing process, visible offset misregistration of 2mm between magenta and cyan ink layers, tactile rough paper tooth.`
+- **半色调网点玫瑰花结（Halftone Rosette Dots）**：`Microscopic CMYK halftone rosette screen dot pattern visible in the shadow gradients, authentic vintage newsprint texture.`
+- **活字凸版压印凹痕（Letterpress Debossing Impression）**：`Heavy 600gsm cotton cardstock with palpable three-dimensional letterpress debossed text indentations, catching directional side light.`
+- **做旧折痕与磨损（Vintage Fold Marks & Patina）**：`Subtle weathered paper patina, four authentic quarter-fold crease lines with micro-fiber fraying along the folds, archival collector condition.`
+
+---
+
+## 3. 先锋海报设计交付提示词包 (10套完整实战海报母版)
+
+### Case 1 · 瑞士极简国际主义平面海报 · 声音艺术展览
+```text
+A modernist museum exhibition poster designed in the Swiss International Typographic Style, vertical 3:4 format.
+Visual Center: An abstract geometric sculpture composed of three concentric matte red circles sliced by a razor-thin black vertical axis, symbolizing sound frequency modulation.
+Layout & Grid: Rigorous grid alignment. The top third features generous off-white negative space (#F5F4F0).
+Typography Integration:
+- Header in bold, tracked Akzidenz-Grotesk sans-serif: "ACOUSTIC PHENOMENON" in deep black ink.
+- Sub-data aligned on the lower-left grid: "ZÜRICH KUNSTHALLE · 14.10 — 28.11 · HALL B".
+- Small-scale chronological index block and barcode graphic placed precisely in the bottom-right corner.
+Print Aesthetic: Authentic silkscreen poster print on heavy matte uncoated cotton paper, subtle microscopic ink bleed, pristine European graphic design mastery.
+AVOID: 3D rendered bevels, drop shadows, cartoon characters, messy hand-drawn doodles, gradient mesh.
+```
+
+### Case 2 · 包豪斯百年对角线构成海报 · 建筑与机械对话
+```text
+A Bauhaus centennial tribute art poster, 3:4 portrait ratio.
+Visual Composition: Dynamic 45-degree diagonal composition. A stark intersection of a bold cobalt-blue circle, an ochre-yellow solid triangle, and a heavy vermillion-red diagonal beam slicing across the canvas. Integrated into the shapes are fine technical blueprint linework schematics of architectural scaffolding.
+Background: Raw cream-toned architectural paper with subtle fibrous pulp grain.
+Typography: Bold geometric constructivist lettering running parallel along the diagonal red beam: "BAUHAUS 1923-2023 · FORM FOLLOWS FUNCTION".
+Tone: Herbert Bayer / László Moholy-Nagy avant-garde typography, tactile letterpress impression depth, historical museum collector standard.
+AVOID: modern digital gradients, photorealistic faces, messy digital noise, glossy finish, glossy highlights.
+```
+
+### Case 3 · 新野兽派反精致潮流海报 · 赛博青年俱乐部夜
+```text
+A cutting-edge Neo-Brutalist music festival poster, vertical 9:16 layout.
+Aesthetic: High-impact anti-design rebellion. Saturated neon electric lime background (#D4FF00) contrasting with stark jet-black bold rectangular container blocks.
+Visual Elements: A central duotone high-contrast photocopy of an ecstatic rave crowd with heavy grain and pixelated xerox artifacts, surrounded by chunky industrial warning stripes, inverted marquee stickers, and metallic silver bubble-gum 3D badges.
+Typography: Gigantic, ultra-wide stretched brutalist display typography stacked in center: "NEO-CIRCUIT 004", with sub-lineup names printed in raw monospace typewriter code at a 90-degree rotated angle along the left margin.
+Quality: Supreme Tokyo / Berlin underground club flyer texture, raw, unapologetic, iconic visual punch.
+AVOID: elegant wedding fonts, soft pastel watercolors, realistic corporate portrait, clean gradient blur.
+```
+
+### Case 4 · 蒙德里安新造型主义解构海报 (De Stijl Geometric Poster)
+```text
+An avant-garde art exhibition poster inspired by De Stijl and Piet Mondrian.
+Composition: Asymmetrical black grid lines of varying thickness dividing the canvas into rectangles of pure primary colors (cadmium red, cobalt blue, lemon yellow) and pure chalk white.
+Typography: Sans-serif typography set entirely in lowercase, running vertically alongside the thickest black axis line: "neo-plasticism / rotterdam 1925".
+Medium: Matte gouache screen-printed on vintage textured sketchbook stock, subtle hand-painted brush texture within the color blocks.
+AVOID: 3D shadows, bevels, gradients, diagonal lines, curved organic shapes.
+```
+
+### Case 5 · 20世纪初苏联先锋派构成主义政治海报 (Constructivist Agitprop)
+```text
+A Soviet Constructivist propaganda art poster in the style of El Lissitzky and Alexander Rodchenko.
+Visual Center: A stark geometric red wedge violently slicing into a white circle, surrounded by stylized industrial gear wheels, smoking factory smokestacks, and bold diagonal photographic cutouts of heroic workers looking upward.
+Colors: High-contrast three-color palette of Soviet vermillion red, industrial soot black, and off-white newsprint paper.
+Typography: Bold, angular Cyrillic constructivist lettering stamped diagonally across the upper frame.
+Finish: Aged 1920s lithographic print, authentic paper yellowing, coarse ink texture, historic gravitas.
+AVOID: smooth vector curves, modern fonts, pastel shades, glossy digital look.
+```
+
+### Case 6 · 60年代旧金山迷幻摇滚海报 (Psychedelic Rock Fillmore Poster)
+```text
+A 1967 San Francisco psychedelic concert poster in the iconic style of Wes Wilson and Victor Moscoso.
+Visuals: Flowing, melting Art Nouveau organic linework forming a hypnotic kaleidoscope portrait of a mythical siren with hair transforming into flowering peacock feathers.
+Typography: Highly stylized, hand-drawn psychedelic lettering that bends and warps with the fluid contours of the artwork, completely filling negative spaces in contrasting vibrating colors (vivid orange on royal purple).
+Print: Silkscreen blacklight poster finish, micro-dot screen texture, authentic counter-culture poster art.
+AVOID: straight grid lines, corporate fonts, minimalist white backgrounds, modern 3D rendering.
+```
+
+### Case 7 · 极简主义电影概念预告海报 · 深海潜航 (Minimalist Cinematic Teaser)
+```text
+A haunting minimalist movie teaser poster, 2:3 theatrical ratio.
+Visual: 90% of the canvas is pure deep midnight abyss black (#050811). At the extreme bottom edge, a tiny, glowing yellow submarine searchlight casts a narrow conical beam into the darkness, illuminating a single massive prehistoric eye staring back.
+Typography: Single line of widely spaced, razor-thin sans-serif tracking at the top: "LEVIATHAN · IN THEATERS HALLOWEEN".
+Aesthetic: A24 / Mondo movie art print, chilling negative space economy, profound cinematic dread.
+AVOID: crowded action collage, floating cast heads, generic lens flares, messy text blocks.
+```
+
+### Case 8 · 纽约百老汇爵士音乐节海报 (Blue Note Jazz Poster)
+```text
+A classic mid-century modern jazz festival poster inspired by Reid Miles' legendary Blue Note Records album covers.
+Subject: A duotone cyan and black candid photograph of a sweating jazz trumpeter passionately blowing his horn, motion blur on his fingers.
+Graphic Layout: Bold, oversized typography in alternating olive green and white cropping aggressively into the photography: "MIDNIGHT BLUE / NEW YORK JAZZ 1959".
+Print Finish: 12-inch vinyl sleeve jacket texture, ring-wear patina around the borders, authentic mid-century modern graphic design masterpiece.
+AVOID: modern digital fonts, colorful gradients, clean vector clip art, 3D effects.
+```
+
+### Case 9 · 当代先锋剧场海报 · 麦克白夫人 (Contemporary Avant-Garde Theatre)
+```text
+A visceral contemporary theatre key art poster for Shakespeare's 'Macbeth'.
+Imagery: A stark, dramatic high-contrast photograph of pale porcelain hands desperately scrubbing bright scarlet red paint off their palms under a harsh direct spotlight against a pitch-black background. Splatters of crimson ink bleed down the canvas.
+Typography: The single word "UNSEX ME HERE" in distress-eroded serif typography stamped over the wrists in stark white ink.
+Mood: Visceral, psychological horror, supreme fine-art dramatic intensity.
+AVOID: cartoon blood, smiling actors, messy medieval costumes, cheesy fantasy fonts.
+```
+
+### Case 10 · 赛博数码艺术双年展海报 (ASCII & Glitch Key Art)
+```text
+An experimental digital art exhibition poster, vertical 9:16 layout.
+Visual Center: A classical Greek marble statue of Venus de Milo dissolving into complex green ASCII text code, CRT scanlines, and digital glitch displacement artifacts.
+Typography: Modular monospace typography in acid green and silver foil stamping: "THE DIGITAL RENAISSANCE / TOKYO 2026".
+Aesthetic: Post-Internet glitch aesthetic, raw computing syntax, exhibition museum collector standard.
+AVOID: clean corporate vector art, traditional watercolor, warm brown tones.
+```
+
+
+
+---
+
+## 4. 先锋海报版面层级与排版几何学法则 (Typographic Hierarchy & Grid Math)
+
+在设计具有核心主视觉（Key Art）的高定海报时，字体与画面的几何关系必须遵循严格的视觉力学：
+1. **尺度悬殊对比原则（Extreme Scale Contrast 10:1）**：
+   - 核心标题（Title）的字号必须达到正文字号的 8 至 12 倍，形成压倒性的第一视觉重心（Dominant Focal Point）。
+2. **负空间呼吸律动（Negative Space Breathing Ratio）**：
+   - 画面中至少保留 30% - 45% 的低信息量纯净区域（如单色天空、平涂阴影、微质感墙面），使排版文字能够清晰嵌合，杜绝文字压在杂乱纹理上。
+3. **字体配对正交法则（Orthogonal Type Pairing）**：
+   - 严禁全篇使用单一类型字体，也严禁混用风格相近的同类字体。必须采用强反差配对：
+     - `超黑粗无衬线标题 (Ultra-heavy Grotesk)` 搭配 `轻盈文艺古典衬线副标 (Light Didone / Garamond)`；
+     - `机械等宽工程字体 (Technical Monospace)` 搭配 `手写流线连笔签名 (Organic Calligraphy Accent)`。
+
+---
+
+## 5. 补充高阶先锋海报可直接交付提示词库 (Additional Avant-Garde KeyArt Prompts)
+
+### Case 11 · 东京国际设计周主视觉海报 (Tokyo Design Week Key Art)
+```text
+Official exhibition key art poster for Tokyo Design Week, vertical 3:4 aspect ratio.
+Visual Center: An impossible Penrose triangle constructed of polished brushed titanium and translucent amber acrylic resin, floating in the center of a pure off-white minimalist gallery void.
+Typography & Layout: Swiss international typography grid. Ultra-bold typography in deep sumi-black ink running along the left margin: "TOKYO DESIGN BIENNALE 2026". Beneath it, small-scale metadata organized in a tight, three-column mathematical grid: curator names, symposium dates, venue coordinates.
+Print Finish: High-end screen print aesthetic on thick, heavy-toothed Hahnemühle cotton paper, pristine micro-details, zero digital noise.
+AVOID: 3D rainbow gradients, messy doodles, crooked lines, blurry text.
+```
+
+### Case 12 · 威尼斯建筑双年展概念海报 (Venice Biennale Architecture)
+```text
+Architectural concept poster for the Venice Biennale of Architecture, 3:4 portrait format.
+Visuals: A dramatic high-contrast black-and-white architectural photograph of a massive curving concrete brutalist colonnade, with blinding Mediterranean sunlight casting deep geometric shadow stripes across the stone pavement.
+Typography Integration: Elegant, widely tracked serif typography in Venetian red ink positioned in the upper open sky field: "THE VOID AND THE MASS / VENICE ARCHITECTURE 2026".
+Graphic Detail: A technical cross-section blueprint line drawing delicately overlaid across the lower third of the photograph in white ink with 0.7 opacity.
+Aesthetic: Architectural Review / Domus magazine cover prestige, timeless monumentality.
+AVOID: bright cartoon colors, clutter, distorted perspective, blurry edges.
+```
+
+### Case 13 · 电子音乐地下先锋派对海报 (Berlin Underground Techno)
+```text
+A raw underground techno event poster for a warehouse party in Berlin-Kreuzberg, vertical 9:16 layout.
+Aesthetic: Industrial rave brutalism. Stark matte-black background featuring an extreme high-contrast grainy photocopy cutout of a strobe-lit dancer silhouette, overlaid with bold warning hazard hazard-stripes and metallic silver foil typography.
+Typography: Giant, distressed monospace typeface reading "KRAN / 03:00 AM / SECTOR 9" stamped aggressively across the center frame, with line-up names printed in microscopic technical type around the borders like a motherboard circuit board.
+Texture: Authentic photocopier toner scatter, distressed paper crease marks, raw DIY punk energy.
+AVOID: soft pastel colors, elegant floral patterns, clean corporate fonts.
+```

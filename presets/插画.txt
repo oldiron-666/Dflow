@@ -1,0 +1,173 @@
+插画提示词体系通过三维解耦坐标，确保输出插画在“视觉结构”、“艺术笔触”与“色彩情感”三个自由度上达到完全工业化可控。
+
+```text
+       [插画类型 Type] (结构与功能)
+             ▲
+             │  • 架构与流程图 (System Architecture)
+             │  • 概念隐喻图 (Conceptual Metaphor)
+             │  • 叙事故事板 (Narrative Scene)
+             │  • 人物IP与吉祥物 (Character & Mascot)
+             │
+             ├────────────────────────► [艺术风格 Style] (媒介与笔触)
+            /                            • 扁平极简矢量 (Flat Vector)
+           /                             • 日系二次元赛璐珞 (Anime Cel-Shading)
+          /                              • 水彩水墨晕染 (Watercolor & Ink Wash)
+         ▼                               • 复古铜版雕刻 (Vintage Steel Engraving)
+ [色相调色板 Palette]                      • 孔版印刷质感 (Risograph Duo-tone)
+  • 科技冷蓝灰                               • 新野兽派涂鸦 (Neo-Brutalist Doodling)
+  • 暖木大地色                               • 清晰线条漫风 (Ligne Claire Comic)
+  • 赛博霓虹
+  • 莫兰迪低饱和
+```
+
+---
+
+## 2. 三十大技术与前沿商业概念视觉隐喻完全库 (30 Visual Metaphors)
+
+在撰写概念插画提示词时，严禁使用“a drawing of AI”或“data processing”等空洞指令。必须按照宝玉隐喻体系转化为具体物理实体：
+
+1. **分布式共识机制 (Distributed Consensus / Raft / Paxos)**：
+   - 隐喻：七位戴着黄铜面具的古典天文学家，站在环形浮空岛屿上，手持青铜日晷与发光棱镜，必须将各自投射的金色光束聚焦到中央天球仪的同一刻度。
+2. **事件驱动流式处理 (Kafka / Event Streaming)**：
+   - 隐喻：一条悬浮在虚空中的发光琉璃运河，数以万计载着微缩晶体芯片的小纸船顺流急速漂移，两岸的自动化机械水车精准捞取对应颜色的纸船。
+3. **缓存击穿与穿透 (Cache Penetration & Stampede)**：
+   - 隐喻：坚固的晶体防护盾牌突然出现一道极细裂缝，外侧汹涌的海啸水流瞬间凝聚成一柄高压水刀，径直穿透盾牌刺向后方脆弱的发光母机水晶。
+4. **大语言模型微调 (LoRA / LLM Fine-Tuning)**：
+   - 隐喻：一位身穿白袍的未来钟表匠，正手持极细的金镊子，将一片极其微小但刻满金色符文的超薄蓝宝石齿轮，轻轻卡入一座庞大古老的巨型发条天文钟内部。
+5. **多智能体协作与编排 (Multi-Agent Swarm Orchestration)**：
+   - 隐喻：悬浮机械浮岛上的交响乐团，中央机械指挥官挥舞着光纤指挥棒，四周环绕着负责编码的黄铜机械臂、负责审查的单眼猫头鹰机器人和负责测试的发条齿轮蜜蜂。
+6. **零信任安全架构 (Zero-Trust Security)**：
+   - 隐喻：极简白色走廊中的重重激光虹膜扫描闸门，即使是城堡主人的数字投影，在经过每一扇拱门时也必须接受机械守卫的棱镜解构验真。
+7. **垃圾回收机制 (Garbage Collection / Memory Management)**：
+   - 隐喻：发光的微缩机械清道夫驾驶着透明气泡飞行器，用磁力光束精准吸取废弃在漂浮内存积木上的褪色发条碎片，并将其投入虚空熔炉重铸。
+8. **微服务与容器编排 (Kubernetes / Docker Pods)**：
+   - 隐喻：一艘巨大的模块化未来货运飞船，腹腔内整齐码放着数百个散发柔和青光的全息六边形蜂巢集装箱，智能无人机群正在穿梭吊运替换单个损坏的箱体。
+
+---
+
+## 3. 宝玉插画实战可交付提示词包 (10套完整专业母版)
+
+### Case 1 · 技术架构图：AI Agent 协同网络 (Modern Flat Tech Vector)
+```text
+A modern conceptual vector illustration depicting an AI multi-agent collaborative network.
+Scene: A modular floating isometric workspace. In the center, a luminous cyan crystal core (representing the Central Orchestrator) radiates glowing connecting circuit lines to four specialized worker robotic mascots on surrounding hexagonal floating platforms: a Researcher bot with a brass magnifying glass, a Coder bot with glowing code brackets, a Tester bot with a holographic green checkmark shield, and a Writer bot typing on an antique keyboard.
+Art Style: Dribbble trending tech vector art, clean sharp line work, flat colors with subtle grain texture gradients, minimalist geometric background with floating data nodes.
+Color Palette: Deep navy background (#0F172A), vibrant cyan (#06B6D4), warm coral accent (#F43F5E), crisp white.
+Quality: Modern editorial tech publication cover standard, perfectly balanced vector hierarchy, zero text glitches.
+AVOID: messy 3D render, chaotic clutter, ugly photorealistic humans, blurry lines, watermark.
+```
+
+### Case 2 · 日系二次元赛璐珞：机能风黑客少女 (Anime Cel-Shaded Key Art)
+```text
+High-end anime key visual illustration. A badass cyber-investigator anime girl in her late teens with choppy lavender short hair, vivid magenta eyes, and a sleek black tactical cyber-headset. She wears an oversized techwear windbreaker jacket adorned with utilitarian straps and glowing neon zipper pulls over a fitted black ribbed top.
+Pose & Scene: She crouches gracefully atop the edge of a rainy neon-lit skyscraper roof in Neo-Shinjuku at midnight, tapping a transparent glowing holographic user interface projected from her fingertips. Rain droplets streak down through the neon lights.
+Style: Studio Trigger meets Makoto Shinkai aesthetic, pristine crisp vector ink lines, clean dual-tone cel shading, volumetric lens flares from the city below, sparkling particle sparks.
+Color Grading: Rich midnight blue, vivid magenta neon, and electric mint green accents.
+AVOID: low quality anime, deformed anatomy, bad hands, washed out colors, sketch lines, flat unshaded colors.
+```
+
+### Case 3 · 复古铜版雕刻：人工智能起源与图灵机 (Vintage Steel Engraving)
+```text
+A detailed 19th-century vintage steel engraving illustration depicting the philosophical genesis of machine intelligence.
+Visual Subject: A monumental Victorian-era brass computing apparatus inspired by Babbage's Difference Engine, featuring intricate interlocking bronze gears, mechanical dials, and punched paper tape looping endlessly into an antique globe of the human brain made of clockwork mechanisms.
+Art Technique: Intricate woodcut and copperplate etching, meticulous black ink cross-hatching, fine parallel shading lines, printed on aged tea-stained parchment paper with subtle antique foxing and weathered deckle edges.
+Aesthetic: Antique scientific encyclopedia frontispiece, profound historical gravity, supreme linework density.
+AVOID: modern digital look, vibrant plastic colors, 3D CGI render, blurry lines, low contrast.
+```
+
+### Case 4 · 孔版双色印刷：独立开发者与深夜灵感 (Risograph Duotone Print)
+```text
+A stylish two-color Risograph print illustration depicting a lone indie hacker working late at night.
+Composition: Cozy loft bedroom view. The developer is seen from behind, sitting cross-legged at a simple wooden table, illuminated solely by the warm glow of dual monitors. A sleeping cat is curled up beside the keyboard; empty coffee mugs and potted cacti line the windowsill overlooking the night skyline.
+Print Effect: Authentic Risograph duotone overlay using Fluorescent Pink (#FF48B0) and Rich Indigo Blue (#1B1F3B). Noticeable screen-printing halftone dot grain, organic soy-ink absorption on off-white fibrous cotton paper, slight charming color misregistration along overlapping silhouette contours.
+Mood: Nostalgic, peaceful, creative flow state, indie zine cover aesthetic.
+AVOID: smooth digital vector gradient, photorealism, glossy plastic, 3D rendering, muddy colors.
+```
+
+### Case 5 · 水墨流体意境：代码重构如流水破冰 (Sumi-e Wash & Watercolor)
+```text
+An expressive sumi-e ink wash and watercolor illustration symbolizing software refactoring and continuous integration.
+Imagery: A frozen jagged crystalline ice mountain (representing legacy monolith code) organically dissolving into a dynamic swirling river of emerald green and indigo blue flowing water that transforms into leaping koi fish swimming upstream through a bamboo forest.
+Technique: Traditional East Asian ink painting combined with loose wet-on-wet modern watercolor blooms. Splashes of spontaneous ink splatter, dry brush flying-white (feibai) strokes expressing kinetic velocity, textured handmade Xuan rice paper background with raw fibrous texture.
+Atmosphere: Poetic, zen-like clarity, high dynamic contrast between bold black ink and vibrant organic watercolor pigments.
+AVOID: rigid mechanical drawings, CGI, oversaturated neon, Western comic style.
+```
+
+### Case 6 · 法式清晰线条漫风：未来城市生态乌托邦 (Ligne Claire Architecture)
+```text
+A Franco-Belgian comic art illustration in the iconic Ligne Claire (clear line) style of Hergé and Moebius.
+Setting: A utopian retro-futuristic Parisian plaza. Pedestrians in elegant 1950s tailoring mingle alongside gentle, rounded robotic mail carriers. Bicycles and hovering vintage hydrofoil trams share tree-lined avenues with solar-glass awnings and hanging vertical gardens.
+Art Technique: Strict uniform black ink outlines with zero line modulation, flat pure pastel colors, completely absence of dark shadow cross-hatching, crystal-clear architectural perspective and structural honesty.
+Color Palette: Pale sky blue, pistachio cream green, warm terracotta red, and chalk white.
+AVOID: dirty grunge textures, heavy black shadows, 3D digital shading, blurry lines.
+```
+
+### Case 7 · 吉祥物IP设计多角度表：极客猫头鹰 (Mascot IP Turnaround Sheet)
+```text
+A professional mascot character design sheet for a tech startup: 'Archie the DevOps Owl'.
+Panels: Three full-body turnaround views (Front, 45-degree angle, Side profile) plus three expressive facial busts (Excited eureka moment, Sleepy debugging with coffee mug, Victorious deployment fist-pump).
+Character Features: A chubby, friendly navy-blue feathered owl wearing thick round brass spectacles, an orange mini knitted scarf, and holding a golden mechanical wrench in its wing claw.
+Style: Clean vector line art, bold stroke weight, vibrant flat colors with soft cell highlights, stickers and merch ready, transparent background.
+```
+
+### Case 8 · 新野兽派粗糙黑白涂鸦：技术债务危机 (Neo-Brutalist Technical Debt)
+```text
+A satirical editorial neo-brutalist illustration depicting the accumulation of technical debt.
+Imagery: A comically fragile, leaning tower built of mismatched wooden crates, cardboard boxes, rolls of duct tape, and tangled ethernet cables. At the precarious summit, a frantic cartoon developer tries to balance an oversized, heavy golden grand piano labeled 'NEW FEATURE'.
+Art Style: Raw, irreverent, unpolished pen-and-ink cartoon with intentional wobbly ink tremors, stark high-contrast black ink on stark yellow newsprint paper, rough dry-brush shading, punk zine aesthetic.
+```
+
+### Case 9 · 抽象信息图：注意力机制全景图谱 (Attention Mechanism Infographic)
+```text
+A sophisticated editorial infographic illustration visualizing Transformer self-attention.
+Visuals: A matrix of glowing crystalline semantic words floating in a circular amphitheater. Golden optical laser filaments crisscross between related concept nodes, illuminating a central floating mirror that refracts the converged thoughts into a singular coherent beam of white light.
+Art Style: Minimalist Swiss graphic design meets futuristic conceptual art, elegant thin geometric lines, precise mathematical proportions, subtle atmospheric dust motes.
+Colors: Obsidian black base, luminous gold and electric violet accents.
+```
+
+### Case 10 · 治愈系儿童绘本风：第一行代码的诞生 (Storybook Nostalgia)
+```text
+A warm, nostalgic children's storybook illustration depicting a child's wonder at writing their first computer program.
+Scene: A cozy bedroom at dusk. A 10-year-old girl with pigtails sitting in an oversized vintage armchair in front of a glowing boxy 1980s personal computer. On the curved green phosphor CRT screen, the words 'HELLO WORLD' glow brightly. Her eyes sparkle with magical wonder. Soft golden light from a bedside mushroom lamp illuminates warm floral wallpaper and scattered picture books.
+Medium: Textured gouache and colored pencil on rough watercolor paper, gentle visible pencil grain, cozy bedtime warmth.
+```
+
+
+
+---
+
+## 5. 宝玉插画进阶概念隐喻库与商业叙事模型 (Advanced Metaphor Engine)
+
+继续扩充二十个高频技术与商业战略概念的实体映射法则：
+1. **零知识证明 (Zero-Knowledge Proofs)**：
+   - 隐喻：一座神秘的环形阿里巴巴洞穴，洞内两道不同颜色的石门被单向发条锁锁死。一位身着深蓝斗篷的学者从出口安然走出，手持一块完好无损的金色石板，证明其知晓密码，而无需向石门外的守卫透露咒语。
+2. **内存泄漏与幽灵占用 (Memory Leak)**：
+   - 隐喻：一艘在虚空中航行的机械发条飞艇，舱底深处一根看似微不足道的细铜管正无声地滴落微小的发光水晶珠，水晶在货舱角落逐渐结晶堆积成沉重的晶石山，飞艇的浮力气囊正被缓缓拉向深渊。
+3. **图神经网络与知识图谱 (Graph Neural Networks & Knowledge Graphs)**：
+   - 隐喻：一片浩瀚璀璨的立体发光星座森林，数以万计的水晶多面体星辰由脉动的金色光纤神经纤维彼此相连，光脉冲沿着网络传递信息，点亮了整片星域中的隐秘逻辑群落。
+4. **服务网格与智能路由 (Service Mesh / Istio)**：
+   - 隐喻：繁忙的未来立体都市空中立交桥网络，每辆穿梭的高速光子飞车旁都伴飞着一只微型黄铜机械蜂鸟（Sidecar Proxy），负责扫描路况、加密码头通行证并在毫秒内重定向路线。
+5. **最终一致性与分布式事务 (Eventual Consistency & SAGA)**：
+   - 隐喻：环形山脉四座城堡之间的信鸽接力传递，四面塔楼上的大钟在经历了一连串发条齿轮的咬合振动后，最终在清晨的第一缕阳光中同时敲响了完全一致的晨钟。
+
+---
+
+## 6. 宝玉插画高阶交付案例库 (Additional Conceptual Prompts)
+
+### Case 11 · 知识图谱与语义发现：漫步星图森林
+```text
+A poetic conceptual vector illustration depicting knowledge graph discovery and semantic search.
+Visuals: A tiny researcher figure carrying a warm brass lantern, walking along a glowing geometric bridge through an infinite 3D cosmos of interconnected glowing crystal spheres (representing concepts). Thin golden filaments connect related nodes, creating a magnificent luminous galaxy of interconnected ideas.
+Style: Elegant editorial flat vector art, clean thin line art, rich midnight navy background (#0A0E1A), glowing amber and cyan nodes, subtle paper grain texture.
+Atmosphere: Wonder, intellectual discovery, modern academic publishing standard.
+AVOID: chaotic messy lines, ugly 3D rendering, dark muddy colors.
+```
+
+### Case 12 · 智能运维与自动化自愈：发条都市的自动巡警
+```text
+A retro-futuristic isometric vector illustration showing an automated self-healing system infrastructure.
+Scene: A sprawling miniature steampunk metropolis built of polished brass pipes, vacuum tubes, and glass conduits. When a tiny pipe springs a small steam leak, a spherical robotic repair drone with a glowing green wrench instantly deploys from a rooftop station, welding the seam shut with a neat burst of golden sparks while the city operates seamlessly.
+Colors: Slate blue background, warm polished brass, glowing emerald green status indicators.
+Aesthetic: Dribbble trending technology illustration, charming, precise, crisp vector curves.
+AVOID: grungy dirty textures, blurry lines, broken geometry.
+```

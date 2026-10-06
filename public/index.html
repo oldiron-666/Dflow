@@ -253,7 +253,17 @@
 
 <div id="lightbox" class="lightbox hidden" aria-hidden="true">
   <button id="lightboxClose" class="lightbox-close" aria-label="关闭">×</button>
-  <img id="lightboxImage" alt="高清预览"><div id="lightboxHint">点击空白处关闭</div>
+  <img id="lightboxImage" alt="高清预览">
+  <div id="lightboxPagination" class="lightbox-pagination" hidden>
+    <button type="button" id="lightboxPrev" class="lightbox-nav-btn" aria-label="上一页" title="上一页 (←)">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+    </button>
+    <span id="lightboxPageIndicator" class="lightbox-page-indicator">1 / 1</span>
+    <button type="button" id="lightboxNext" class="lightbox-nav-btn" aria-label="下一页" title="下一页 (→)">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+    </button>
+  </div>
+  <div id="lightboxHint">点击空白处关闭</div>
 </div>
 <div id="toast"></div>
 <dialog id="shareImportDialog" class="share-import-dialog">

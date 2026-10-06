@@ -7,7 +7,38 @@ const project = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_EXPANSION = fs.readFileSync(path.join(project, 'presets', '通用扩写.txt'), 'utf8');
 export const PRESET_STORE = 'mcp-presets.json';
 export function presetDefaults() {
-  return { reverse: [{ name: '通用反推', content: DEFAULT_REVERSE }], expansion: [{ name: '通用扩写', content: DEFAULT_EXPANSION }], defaultReverse: '通用反推', defaultExpansion: '通用扩写' };
+  const presetsDir = path.join(project, 'presets');
+  const expansionList = [];
+  const preferredOrder = ['通用扩写', '插画', '电影感动漫', '动漫海报', '巨构提示词'];
+  const loaded = new Set();
+  if (fs.existsSync(presetsDir)) {
+    for (const name of preferredOrder) {
+      const file = path.join(presetsDir, `${name}.txt`);
+      if (fs.existsSync(file)) {
+        expansionList.push({ name, content: fs.readFileSync(file, 'utf8') });
+        loaded.add(name);
+      }
+    }
+    const files = fs.readdirSync(presetsDir).sort();
+    for (const file of files) {
+      if (file.endsWith('.txt')) {
+        const name = path.basename(file, '.txt');
+        if (!loaded.has(name)) {
+          expansionList.push({ name, content: fs.readFileSync(path.join(presetsDir, file), 'utf8') });
+          loaded.add(name);
+        }
+      }
+    }
+  }
+  if (!expansionList.length) {
+    expansionList.push({ name: '通用扩写', content: DEFAULT_EXPANSION });
+  }
+  return {
+    reverse: [{ name: '通用反推', content: DEFAULT_REVERSE }],
+    expansion: expansionList,
+    defaultReverse: '通用反推',
+    defaultExpansion: '通用扩写'
+  };
 }
 export function validatePresets(raw) {
   if (!raw || typeof raw !== 'object') throw Error('无效预设配置');

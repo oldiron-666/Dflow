@@ -4,6 +4,14 @@ const statusEl = document.querySelector('#status');
 const menu = document.querySelector('#menu');
 const lightbox = document.querySelector('#lightbox');
 const lightboxImage = document.querySelector('#lightboxImage');
+const lightboxPagination = document.querySelector('#lightboxPagination');
+const lightboxPrev = document.querySelector('#lightboxPrev');
+const lightboxNext = document.querySelector('#lightboxNext');
+const lightboxPageIndicator = document.querySelector('#lightboxPageIndicator');
+let lightboxPageIndex = 0;
+let lightboxPageCount = 1;
+let lightboxPages = null;
+let lightboxFetchAbort = null;
 const searchInput = document.querySelector('#search');
 
 const FAVORITES_KEY = 'dflowFavoritesV1';
@@ -2552,41 +2560,179 @@ function showPromptDialog(prompt, target, onSaved, options = {}) {
     });
   }
 }
+function getLightboxPageSrc(post, index) {
+  if (!post) return '';
+  if (Array.isArray(post.pages) && post.pages[index]) {
+    return imageSrc(post.pages[index].large_file_url || post.pages[index].file_url);
+  }
+  const base = post.large_file_url || post.file_url || post.sourceImageUrl || '';
+  if (base.includes('_p0')) {
+    const pageUrl = base.replace(/_p0(?=(_[a-zA-Z0-9]+)?\.[a-zA-Z0-9]+)/, `_p${index}`);
+    return imageSrc(pageUrl);
+  }
+  return imageSrc(hiRes(post));
+}
+
+function preloadLightboxPage(post, index) {
+  if (!post || index < 0 || index >= lightboxPageCount) return;
+  const src = getLightboxPageSrc(post, index);
+  if (src) {
+    const img = new Image();
+    img.src = src;
+  }
+}
+
+function updateLightboxPagination() {
+  if (!lightboxPagination) return;
+  if (lightboxPageCount > 1) {
+    lightboxPagination.hidden = false;
+    lightbox.classList.add('has-pages');
+    if (lightboxPageIndicator) {
+      lightboxPageIndicator.textContent = `${lightboxPageIndex + 1} / ${lightboxPageCount}`;
+    }
+    if (lightboxPrev) {
+      lightboxPrev.disabled = (lightboxPageIndex <= 0);
+    }
+    if (lightboxNext) {
+      lightboxNext.disabled = (lightboxPageIndex >= lightboxPageCount - 1);
+    }
+  } else {
+    lightboxPagination.hidden = true;
+    lightbox.classList.remove('has-pages');
+  }
+}
+
+function switchLightboxPage(index) {
+  if (!previewPost || index < 0 || index >= lightboxPageCount || index === lightboxPageIndex) return;
+  lightboxPageIndex = index;
+  updateLightboxPagination();
+  const nextSrc = getLightboxPageSrc(previewPost, index);
+  if (nextSrc) {
+    lightboxImage.src = nextSrc;
+  }
+  preloadLightboxPage(previewPost, index + 1);
+  preloadLightboxPage(previewPost, index - 1);
+}
+
 function openLightbox(post, card, imageUrl = '') {
   previewPost = post;
   previewCard = card;
-  lightboxImage.src = imageUrl || imageSrc(hiRes(post));
+  lightboxPageIndex = 0;
+  lightboxPages = Array.isArray(post?.pages) ? post.pages : null;
+  lightboxPageCount = Math.max(1, Number(post?.page_count) || (lightboxPages ? lightboxPages.length : 1));
+
+  if (lightboxFetchAbort) {
+    try { lightboxFetchAbort.abort(); } catch {}
+    lightboxFetchAbort = null;
+  }
+
+  lightboxImage.src = imageUrl || getLightboxPageSrc(post, 0) || imageSrc(hiRes(post));
   lightbox.classList.remove('hidden');
   lightbox.setAttribute('aria-hidden', 'false');
+  updateLightboxPagination();
+
+  const illustId = post?.pixiv_id || (post?.source === 'pixiv' || String(post?.id || '').startsWith('px_')
+    ? String(post.id || '').replace(/^px_/, '').split('_')[0]
+    : '');
+  if (lightboxPageCount > 1 && illustId && /^\d+$/.test(illustId) && !post.pages) {
+    const abort = new AbortController();
+    lightboxFetchAbort = abort;
+    fetch(`/api/pixiv/illust/${illustId}/pages`, { signal: abort.signal })
+      .then(r => r.json())
+      .then(res => {
+        if (res.ok && Array.isArray(res.pages) && res.pages.length > 0) {
+          post.pages = res.pages;
+          if (previewPost === post) {
+            lightboxPages = res.pages;
+            lightboxPageCount = res.pages.length;
+            post.page_count = res.pages.length;
+            updateLightboxPagination();
+            preloadLightboxPage(post, 1);
+            const curPage = res.pages[lightboxPageIndex];
+            if (curPage && curPage.width && curPage.height) {
+              placeLightbox(previewCard, {
+                ...post,
+                image_width: curPage.width,
+                image_height: curPage.height
+              });
+            }
+          }
+        }
+      })
+      .catch(() => {});
+  } else if (lightboxPageCount > 1) {
+    preloadLightboxPage(post, 1);
+  }
+
   requestAnimationFrame(() => placeLightbox(card, post));
 }
+
 function placeLightbox(card, post) {
   const vw = innerWidth, vh = innerHeight, rect = card?.getBoundingClientRect();
   const portrait = (post.image_height || 1) / (post.image_width || 1);
-  const targetArea = vw * vh * .24, minW = 260, maxW = Math.min(vw * .56, 760), minH = 180, maxH = vh * .78;
+  const hasPages = (Number(post?.page_count) > 1 || lightboxPageCount > 1);
+  const bottomMargin = hasPages ? 58 : 20;
+  const targetArea = vw * vh * .24, minW = 260, maxW = Math.min(vw * .56, 760), minH = 180, maxH = Math.min(vh * .78, vh - bottomMargin - 30);
   let width = Math.sqrt(targetArea / Math.max(.35, portrait));
   width = Math.max(minW, Math.min(maxW, width));
   let height = width * portrait;
   if (height > maxH) { height = maxH; width = height / portrait; }
   if (width > maxW) { width = maxW; height = width * portrait; }
   if (height < minH) { height = minH; width = height / portrait; }
-  width = Math.min(width, vw - 20); height = Math.min(height, vh - 20);
+  width = Math.min(width, vw - 20); height = Math.min(height, vh - bottomMargin - 10);
   let left = rect ? rect.right + 14 : (vw - width) / 2;
   if (left + width > vw - 10) left = rect ? rect.left - width - 14 : 10;
   if (left < 10) left = Math.max(10, (vw - width) / 2);
   let top = rect ? rect.top : (vh - height) / 2;
-  top = Math.max(10, Math.min(top, vh - height - 10));
+  top = Math.max(10, Math.min(top, vh - height - bottomMargin));
   lightbox.style.setProperty('--panel-width', `${Math.round(width)}px`);
   lightbox.style.setProperty('--panel-height', `${Math.round(height)}px`);
   lightbox.style.setProperty('--panel-left', `${Math.round(left)}px`);
   lightbox.style.setProperty('--panel-top', `${Math.round(top)}px`);
 }
+
 function closeLightbox() {
+  if (lightboxFetchAbort) {
+    try { lightboxFetchAbort.abort(); } catch {}
+    lightboxFetchAbort = null;
+  }
   lightbox.classList.add('hidden');
   lightbox.setAttribute('aria-hidden', 'true');
   lightboxImage.removeAttribute('src');
+  if (lightboxPagination) lightboxPagination.hidden = true;
+  lightbox.classList.remove('has-pages');
   previewCard = null;
+  previewPost = null;
+  lightboxPageIndex = 0;
+  lightboxPageCount = 1;
+  lightboxPages = null;
 }
+
+if (lightboxPagination) {
+  lightboxPagination.addEventListener('click', event => event.stopPropagation());
+}
+if (lightboxPrev) {
+  lightboxPrev.addEventListener('click', event => {
+    event.stopPropagation();
+    switchLightboxPage(lightboxPageIndex - 1);
+  });
+}
+if (lightboxNext) {
+  lightboxNext.addEventListener('click', event => {
+    event.stopPropagation();
+    switchLightboxPage(lightboxPageIndex + 1);
+  });
+}
+lightboxImage.addEventListener('load', () => {
+  if (previewPost && !lightbox.classList.contains('hidden') && lightboxImage.naturalWidth && lightboxImage.naturalHeight) {
+    placeLightbox(previewCard, {
+      ...previewPost,
+      image_width: lightboxImage.naturalWidth,
+      image_height: lightboxImage.naturalHeight
+    });
+  }
+});
+
 lightbox.addEventListener('click', event => {
   if (event.target === lightbox || event.target.id === 'lightboxClose') closeLightbox();
 });
@@ -2597,6 +2743,15 @@ window.addEventListener('resize', () => {
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') closeLightbox();
+  if (!lightbox.classList.contains('hidden') && lightboxPageCount > 1) {
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      switchLightboxPage(lightboxPageIndex - 1);
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      switchLightboxPage(lightboxPageIndex + 1);
+    }
+  }
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z' && !event.target.closest('input, textarea, [contenteditable="true"]')) {
     event.preventDefault();
     undoLastAction();

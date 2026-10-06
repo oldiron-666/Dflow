@@ -21,13 +21,15 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 app.use(express.static(path.join(__dirname, "public")));
-const APP_VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).version || "0.1.0"; } catch { return "0.1.0"; } })();
-const LOCAL_COMMIT = (() => { try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: __dirname, encoding: "utf8", windowsHide: true }).trim(); } catch { return ""; } })();
+const getAppVersion = () => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).version || "0.1.0"; } catch { return "0.1.0"; } };
+const getLocalCommit = () => { try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: __dirname, encoding: "utf8", windowsHide: true }).trim(); } catch { return ""; } };
 const GITHUB_REPO = "oldiron-666/Dflow";
 const GITHUB_BRANCH = "main";
 const VERSION_HEADERS = { "Accept": "application/vnd.github+json", "User-Agent": "DFlow-Version-Checker/1.0" };
 let versionCheckCache = { at: 0, latest: null };
 app.get("/api/version", async (_req, res) => {
+  const currentVersion = getAppVersion();
+  const currentCommit = getLocalCommit();
   const now = Date.now();
   if (!versionCheckCache.latest || now - versionCheckCache.at > 300000) {
     try {
@@ -55,15 +57,15 @@ app.get("/api/version", async (_req, res) => {
       if (!latest.commit && !latest.version) throw Error(`GitHub HTTP ${commitResponse.status}/${packageResponse.status}`);
       versionCheckCache = { at: now, latest };
     } catch (error) {
-      if (!versionCheckCache.latest) return res.json({ ok: false, error: `\u65e0\u6cd5\u8bfb\u53d6 GitHub \u7248\u672c\uff1a${error.message}`, current: { version: APP_VERSION, commit: LOCAL_COMMIT } });
+      if (!versionCheckCache.latest) return res.json({ ok: false, error: `\u65e0\u6cd5\u8bfb\u53d6 GitHub \u7248\u672c\uff1a${error.message}`, current: { version: currentVersion, commit: currentCommit } });
     }
   }
   const latest = versionCheckCache.latest;
-  const commitChanged = Boolean(latest?.commit && (!LOCAL_COMMIT || latest.commit !== LOCAL_COMMIT));
+  const commitChanged = Boolean(latest?.commit && (!currentCommit || latest.commit !== currentCommit));
   // A GitHub commit is authoritative. This also avoids a false update prompt
   // if GitHub's package metadata endpoint is briefly behind the commit API.
-  const versionChanged = Boolean(latest?.version && latest.version !== APP_VERSION && (!latest.commit || latest.commit !== LOCAL_COMMIT));
-  res.json({ ok: true, current: { version: APP_VERSION, commit: LOCAL_COMMIT }, latest, updateAvailable: commitChanged || versionChanged });
+  const versionChanged = Boolean(latest?.version && latest.version !== currentVersion && (!latest.commit || latest.commit !== currentCommit));
+  res.json({ ok: true, current: { version: currentVersion, commit: currentCommit }, latest, updateAvailable: commitChanged || versionChanged });
 });
 
 const DATA_DIR = process.env.DFLOW_DATA_DIR ? path.resolve(process.env.DFLOW_DATA_DIR) : path.join(__dirname, "data");
@@ -2033,6 +2035,50 @@ app.get("/api/pixiv/search", async (req, res) => {
     res.status(502).json({ error: "Pixiv 搜索失败", detail: error.message });
   }
 });
+
+app.get("/api/pixiv/illust/:id/pages", async (req, res) => {
+  try {
+    const rawId = String(req.params.id || "").trim();
+    const illustId = rawId.replace(/^px_/, "").split("_")[0];
+    if (!/^\d+$/.test(illustId)) {
+      return res.status(400).json({ error: "无效的 Pixiv 作品 ID" });
+    }
+    const url = `https://www.pixiv.net/ajax/illust/${illustId}/pages`;
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Referer": "https://www.pixiv.net/",
+      "Accept": "application/json"
+    };
+    if (sharedState.account.pixivCookie) {
+      headers["Cookie"] = sharedState.account.pixivCookie;
+    }
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+    if (!response.ok) {
+      return res.status(response.status).json({ error: `Pixiv pages HTTP ${response.status}` });
+    }
+    const data = await response.json();
+    if (data?.error) {
+      return res.status(400).json({ error: data.message || "获取作品分页失败" });
+    }
+    const pages = Array.isArray(data?.body) ? data.body.map((item, index) => {
+      const regular = item.urls?.regular || "";
+      const original = item.urls?.original || "";
+      const thumb = item.urls?.small || item.urls?.thumb_mini || "";
+      return {
+        page: index,
+        width: Number(item.width) || 0,
+        height: Number(item.height) || 0,
+        preview_file_url: thumb,
+        large_file_url: regular,
+        file_url: original || regular
+      };
+    }) : [];
+    res.json({ ok: true, pages });
+  } catch (error) {
+    res.status(502).json({ error: "获取 Pixiv 作品分页失败", detail: error.message });
+  }
+});
+
 // Local imported PNGs and their parsed generation metadata are independent of favorites.
 const META_DIR = path.join(DATA_DIR, "metadata");
 for (const dir of [ORIGINAL_IMAGE_DIR,PENDING_IMAGE_DIR,WORDED_IMAGE_DIR,COMPLETED_IMAGE_DIR,META_DIR]) fs.mkdirSync(dir,{recursive:true});
