@@ -547,7 +547,7 @@ function registerShareCard(card, item, kind = 'favorite') {
   const key = `${kind}:${shareIdentity(item, kind)}`;
   card.dataset.shareKey = key;
   card._shareRecord = { kind, item };
-  card.classList.toggle('share-selectable', mode === 'favorites' && Boolean(prompt.trim()));
+  card.classList.toggle('share-selectable', mode === 'favorites');
   card.classList.toggle('share-selected', selectedShareKeys.has(key));
   card.addEventListener('click', event => {
     if (!shareSelectionMode || !card.classList.contains('share-selectable')) return;
@@ -579,26 +579,138 @@ function selectedShareRecords() {
 }
 function updateShareActions() {
   const select = document.querySelector('#batchSelect');
+  const selectAll = document.querySelector('#batchSelectAll');
+  const moveToPending = document.querySelector('#batchMoveToPending');
+  const toggleQueue = document.querySelector('#batchToggleQueue');
   const del = document.querySelector('#batchDelete');
   const share = document.querySelector('#batchShare');
   const active = mode === 'favorites' && ['original', 'pending', 'worded', 'completed'].includes(favoriteFolder);
-  if (select) { select.hidden = !active; select.textContent = shareSelectionMode ? '退出选择' : '批量选择'; select.setAttribute('aria-pressed', String(shareSelectionMode)); }
-  if (del) del.hidden = !active || !shareSelectionMode;
+  if (select) {
+    select.hidden = !active;
+    select.textContent = shareSelectionMode ? '退出选择' : '批量选择';
+    select.setAttribute('aria-pressed', String(shareSelectionMode));
+  }
+  const selectableCards = Array.from(gallery.querySelectorAll('.share-selectable[data-share-key]'));
+  const totalSelectable = selectableCards.length;
+  const count = selectedShareKeys.size;
+  const allSelected = totalSelectable > 0 && selectableCards.every(card => selectedShareKeys.has(card.dataset.shareKey));
+
+  if (selectAll) {
+    selectAll.hidden = !active || !shareSelectionMode;
+    selectAll.disabled = totalSelectable === 0;
+    selectAll.textContent = allSelected ? '取消全选' : '全选';
+  }
+  if (moveToPending) {
+    const isOriginal = active && shareSelectionMode && favoriteFolder === 'original';
+    moveToPending.hidden = !isOriginal;
+    moveToPending.disabled = count === 0;
+    moveToPending.textContent = count ? `AI (${count})` : 'AI';
+  }
+  if (toggleQueue) {
+    const isPending = active && shareSelectionMode && favoriteFolder === 'pending';
+    toggleQueue.hidden = !isPending;
+    toggleQueue.disabled = count === 0;
+    toggleQueue.textContent = count ? `队列反选 (${count})` : '队列反选';
+  }
+  if (del) {
+    del.hidden = !active || !shareSelectionMode;
+    del.disabled = count === 0;
+    del.textContent = count ? `删除 (${count})` : '删除';
+  }
   if (share) {
-    const count = selectedShareKeys.size;
+    const hasShareable = selectedShareRecords().some(r => Boolean(sharePromptFor(r.kind, r.item).trim()));
     share.hidden = !active || !shareSelectionMode;
-    share.disabled = count === 0;
+    share.disabled = count === 0 || !hasShareable;
     share.textContent = count ? `分享 (${count})` : '分享';
+  }
+}
+function toggleSelectAllShareCards() {
+  const selectableCards = Array.from(gallery.querySelectorAll('.share-selectable[data-share-key]'));
+  if (!selectableCards.length) return;
+  const allSelected = selectableCards.every(card => selectedShareKeys.has(card.dataset.shareKey));
+  if (allSelected) {
+    selectedShareKeys.clear();
+    selectableCards.forEach(card => card.classList.remove('share-selected'));
+  } else {
+    selectableCards.forEach(card => {
+      selectedShareKeys.add(card.dataset.shareKey);
+      card.classList.add('share-selected');
+    });
+  }
+  updateShareActions();
+}
+async function moveSelectedFavoritesToPending() {
+  const records = selectedShareRecords();
+  if (!records.length) { toast('请先选择要移入待反推的卡片'); return; }
+  const button = document.querySelector('#batchMoveToPending');
+  if (button) { button.disabled = true; button.textContent = '移动中…'; }
+  let successCount = 0;
+  const errors = [];
+  try {
+    const favorites = records.filter(r => r.kind === 'favorite');
+    for (const record of favorites) {
+      try {
+        await patchFavorite(record.item.id, { folder: 'pending' });
+        successCount++;
+      } catch (err) {
+        errors.push(err.message);
+      }
+    }
+    if (successCount > 0) {
+      toast(`已将 ${successCount} 张卡片移入待反推区`);
+    }
+    if (errors.length > 0) {
+      toast(`部分卡片移动失败：${errors[0]}`);
+    }
+    exitShareSelection();
+    refreshFavoriteGallery(true);
+  } finally {
+    updateShareActions();
+  }
+}
+async function toggleSelectedPendingQueue() {
+  const records = selectedShareRecords();
+  if (!records.length) { toast('请先选择要操作队列的卡片'); return; }
+  const button = document.querySelector('#batchToggleQueue');
+  if (button) { button.disabled = true; button.textContent = '更新中…'; }
+  let successCount = 0;
+  const errors = [];
+  try {
+    for (const record of records) {
+      try {
+        const nextAuto = record.item.autoEnabled === false;
+        if (record.kind === 'worded') {
+          await patchWordedState(record.item.id, { autoEnabled: nextAuto });
+        } else {
+          await patchFavorite(record.item.id, { autoEnabled: nextAuto });
+        }
+        successCount++;
+      } catch (err) {
+        errors.push(err.message);
+      }
+    }
+    if (successCount > 0) {
+      toast(`已反选 ${successCount} 张卡片的队列状态`);
+    }
+    if (errors.length > 0) {
+      toast(`部分卡片队列更新失败：${errors[0]}`);
+    }
+    exitShareSelection();
+    loadWordedGallery(true);
+  } finally {
+    updateShareActions();
   }
 }
 function enterShareSelection() {
   if (mode !== 'favorites') return;
   shareSelectionMode = true;
+  document.body.classList.add('batch-selecting');
   updateShareActions();
 }
 function exitShareSelection() {
   shareSelectionMode = false;
   selectedShareKeys.clear();
+  document.body.classList.remove('batch-selecting');
   gallery.querySelectorAll('.share-selected').forEach(card => card.classList.remove('share-selected'));
   updateShareActions();
 }
@@ -840,7 +952,10 @@ async function deleteSelectedShareCards() {
     await saveFavorites(remaining);
   }
   exitShareSelection();
-  if (mode === 'favorites') refreshFavoriteGallery(true);
+  if (mode === 'favorites') {
+    if (['worded', 'pending', 'completed'].includes(favoriteFolder)) loadWordedGallery(true);
+    else refreshFavoriteGallery(true);
+  }
   toast(errors.length ? `已删除部分卡片，${errors.length} 张失败：${errors[0]}` : `已删除 ${records.length} 张卡片`);
 }
 function isFavorite(value) {
@@ -863,6 +978,7 @@ function updateFavoriteCount() {
     retry.disabled = retryCacheBusy || missing === 0;
     retry.title = missing ? `重新下载 ${missing} 张没有高清缓存的图片` : '当前没有缺失高清缓存的图片';
   }
+  updateShareActions();
 }
 function updateFavoriteButtons(id) {
   const active = isFavorite(id);
@@ -1662,7 +1778,7 @@ function attach3DCardFlip(card, cardInner) {
   };
 
   card.addEventListener('click', (e) => {
-    if (e.target.closest('button, input, textarea, select, summary, details, [contenteditable="true"], .preset-option-item, .preset-bar-clickable, .param-item, a')) {
+    if (e.target.closest('.ui-strip, .card-ui-strip, button, input, textarea, select, summary, details, [contenteditable="true"], .preset-option-item, .preset-bar-clickable, .param-item, a')) {
       scheduleAutoFlip();
       return;
     }
@@ -1763,6 +1879,9 @@ function renderReverseCard(item, options = {}) {
   // Front UI strip (紧贴画芯，高斯模糊底色)
   const uiStrip = document.createElement('aside');
   uiStrip.className = `ui-strip blur-bg ${isLandscape ? 'horizontal-strip' : 'vertical-strip'}`;
+  uiStrip.addEventListener('click', event => {
+    event.stopPropagation();
+  });
 
   const patchState = changes => isWordedEntry
     ? patchWordedState(item.id, changes)
@@ -1774,6 +1893,7 @@ function renderReverseCard(item, options = {}) {
 
   const isPixiv = item.source === 'pixiv' || String(item.id).startsWith('px_');
   let pendingControls = null;
+  let queueButton = null;
 
   if (pending) {
     // 待反推正面：[ ← ] 返回按钮
@@ -1785,6 +1905,24 @@ function renderReverseCard(item, options = {}) {
     backBtn.setAttribute('aria-label', backBtn.title);
     backBtn.onclick = event => { event.stopPropagation(); moveTo(isWordedEntry ? 'worded' : 'original'); };
     uiStrip.append(backBtn);
+
+    // 待反推正面：[ 队列 ] 队列按钮（移到卡片正面 UI 区）
+    queueButton = document.createElement('button');
+    queueButton.type = 'button';
+    queueButton.className = `round-action-btn round-queue-btn ${item.autoEnabled !== false ? 'active' : ''}`;
+    queueButton.textContent = item.autoEnabled !== false ? String(initialQueueOrder || '·') : '+';
+    queueButton.title = item.autoEnabled !== false ? `队列第 ${initialQueueOrder || '?'} 位，点击移出队列` : '点击加入反推队列';
+    queueButton.setAttribute('aria-label', queueButton.title);
+    queueButton.onclick = async event => {
+      event.stopPropagation();
+      queueButton.disabled = true;
+      try {
+        const updated = await patchState({autoEnabled: item.autoEnabled === false});
+        Object.assign(item, updated || {});
+        refreshGallery();
+      } catch (error) { queueButton.disabled = false; toast(`更新队列失败：${error.message}`); }
+    };
+    uiStrip.append(queueButton);
 
     // 待反推正面：[ ♥ ] 收藏按钮
     const heartBtn = document.createElement('button');
@@ -1981,26 +2119,7 @@ function renderReverseCard(item, options = {}) {
       };
     }
 
-    const queueWrap = document.createElement('div');
-    queueWrap.className = 'pending-queue-wrap';
-    const queueText = document.createElement('span');
-    queueText.textContent = '队列';
-    const queueButton = document.createElement('button');
-    queueButton.type = 'button';
-    queueButton.className = `queue-badge-btn ${item.autoEnabled !== false ? 'active' : ''}`;
-    queueButton.textContent = item.autoEnabled !== false ? String(initialQueueOrder || '·') : '+';
-    queueButton.title = item.autoEnabled !== false ? `队列第 ${initialQueueOrder || '?'} 位，点击移出` : '点击加入反推队列';
-    queueButton.onclick = async event => {
-      event.stopPropagation();
-      queueButton.disabled = true;
-      try {
-        const updated = await patchState({autoEnabled: item.autoEnabled === false});
-        Object.assign(item, updated || {});
-        refreshGallery();
-      } catch (error) { queueButton.disabled = false; toast(`更新队列失败：${error.message}`); }
-    };
-    queueWrap.append(queueText, queueButton);
-    statusQueueRow.append(status, queueWrap);
+    statusQueueRow.append(status);
 
     // 4. 扩写预设栏：整栏直接点击展开（Custom Dropdown）
     const presetDropdownWrap = document.createElement('div');
@@ -2198,6 +2317,7 @@ function renderReverseCard(item, options = {}) {
   card._updateFavoriteState = next => { Object.assign(item, next || {}); updatePendingControls(item, pendingControls); };
   if (pendingControls) updatePendingControls(item, pendingControls);
 
+  registerShareCard(card, item, kind);
   card.oncontextmenu = event => isWordedEntry ? showManualMenu(event, item) : showMenu(event, item);
   const cardWeight = Math.max(0.6, Math.min(2.5, (height / width) + (isLandscape ? 0.2 : 0)));
   appendRenderedCard(card, cardWeight);
@@ -3169,6 +3289,18 @@ if (batchSelectButton) batchSelectButton.onclick = event => {
   if (shareSelectionMode) exitShareSelection();
   else enterShareSelection();
 };
+document.querySelector('#batchSelectAll')?.addEventListener('click', event => {
+  event.stopPropagation();
+  toggleSelectAllShareCards();
+});
+document.querySelector('#batchMoveToPending')?.addEventListener('click', event => {
+  event.stopPropagation();
+  moveSelectedFavoritesToPending();
+});
+document.querySelector('#batchToggleQueue')?.addEventListener('click', event => {
+  event.stopPropagation();
+  toggleSelectedPendingQueue();
+});
 document.querySelector('#batchDelete')?.addEventListener('click', event => {
   event.stopPropagation();
   deleteSelectedShareCards();

@@ -95,6 +95,9 @@
   <button type="button" data-folder="completed">已完成 <span id="completedCount">0</span></button>
   <button type="button" id="retryMissingCache" class="cache-retry-all" disabled>重新下载未缓存</button>
   <button type="button" id="batchSelect">批量选择</button>
+  <button type="button" id="batchSelectAll" hidden>全选</button>
+  <button type="button" id="batchMoveToPending" class="batch-ai-btn" hidden title="将选中卡片移入待反推区">AI</button>
+  <button type="button" id="batchToggleQueue" class="batch-queue-btn" hidden title="对选中卡片进行队列反选">队列反选</button>
   <button type="button" id="batchDelete" class="batch-action-danger" hidden>删除</button>
   <button type="button" id="batchShare" hidden disabled>分享</button>
   <button type="button" id="importShare">导入分享</button>
@@ -298,6 +301,38 @@
     <p>GitHub 上有更新版本，是否稍后更新？</p>
     <div class="update-version-row"><span>当前</span><code class="update-current"></code></div>
     <div class="update-version-row"><span>GitHub</span><code class="update-latest"></code></div>
+    <div class="update-notes-container">
+      <div class="update-notes-title">更新公告（v0.3 ~ v0.33）：</div>
+      <div class="update-notes-list">
+        <div class="update-notes-item">
+          <strong>v0.3.3</strong>
+          <ul>
+            <li>批量选择增强：新增「全选 / 取消全选」；原始收藏支持批量「AI」移入待反推区；待反推区支持「队列反选」一键批量切换入队状态。</li>
+            <li>待反推卡片优化：队列开关徽标移入正面高斯模糊 UI 栏；正面 UI 栏点击不翻面，仅点击画芯翻转。</li>
+          </ul>
+        </div>
+        <div class="update-notes-item">
+          <strong>v0.3.2</strong>
+          <ul>
+            <li>3D 灵敏度调节：设置面板 MCP 行新增灵敏度滑块，支持 0°~28° 平滑微视差调节与本地记忆。</li>
+            <li>一键拉取更新：更新弹窗增加一键拉取更新按钮，直接同步远程最新代码并自动重载生效。</li>
+          </ul>
+        </div>
+        <div class="update-notes-item">
+          <strong>v0.3.1</strong>
+          <ul>
+            <li>新增 4 种扩写预设：插画、电影感动漫、动漫海报、巨构提示词，非常美味。</li>
+            <li>Pixiv 多图查看：大图预览识别多图作品并在底部提供左右切换按钮与键盘快捷翻页。</li>
+          </ul>
+        </div>
+        <div class="update-notes-item">
+          <strong>v0.3.0</strong>
+          <ul>
+            <li>UI 大改：全新 3D 悬浮微视差翻转卡片与高级感卡背工作流。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
     <div id="updateStatusText" class="update-status-text" hidden></div>
     <div class="update-dialog-actions">
       <button id="updateNow" type="button" class="btn-primary update-now-btn">一键拉取更新</button>
