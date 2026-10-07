@@ -241,7 +241,16 @@
           <label>默认扩写预设<select id="defaultExpansionPreset"></select></label>
         </section>
       </div>
-      <div class="mcp-save-row"><span class="settings-desc">预设仅保存到本机 data/mcp-presets/，仓库只自带通用扩写。</span><button type="button" id="saveMcpPresets" class="btn-primary">保存预设</button><span id="mcpPresetStatus" class="status-inline"></span></div>
+      <div class="mcp-save-row">
+        <div class="tilt-control-group">
+          <label for="tiltSlider">3D 灵敏度</label>
+          <input type="range" id="tiltSlider" min="0" max="28" step="1" value="13">
+          <span id="tiltVal" class="val-badge">13°</span>
+        </div>
+        <span class="settings-desc">预设仅保存到本机 data/mcp-presets/，仓库只自带通用扩写。</span>
+        <button type="button" id="saveMcpPresets" class="btn-primary">保存预设</button>
+        <span id="mcpPresetStatus" class="status-inline"></span>
+      </div>
     </div>
   </div>
 
@@ -289,7 +298,9 @@
     <p>GitHub 上有更新版本，是否稍后更新？</p>
     <div class="update-version-row"><span>当前</span><code class="update-current"></code></div>
     <div class="update-version-row"><span>GitHub</span><code class="update-latest"></code></div>
+    <div id="updateStatusText" class="update-status-text" hidden></div>
     <div class="update-dialog-actions">
+      <button id="updateNow" type="button" class="btn-primary update-now-btn">一键拉取更新</button>
       <button id="updateLater" type="button">稍后提醒</button>
       <button id="updateSkipOnce" type="button">跳过这个版本</button>
       <button id="updateSkipForever" type="button" class="danger">永久不提醒</button>

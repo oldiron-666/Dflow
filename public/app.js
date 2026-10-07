@@ -1582,8 +1582,15 @@ async function runDirectReverse(item, controls) {
     if (document.body.contains(button)) updatePendingControls(item, controls);
   }
 }
+let currentTiltDeg = (() => {
+  try {
+    const saved = localStorage.getItem('dflowTiltSensitivity');
+    if (saved !== null && !isNaN(Number(saved))) return Number(saved);
+  } catch {}
+  return 13;
+})();
+
 function attach3DCardTilt(card, cardWrapper) {
-  const maxTiltDeg = 13; // 默认适度灵敏度（已降半）
   let cachedRect = null;
   let rafId = null;
 
@@ -1599,14 +1606,18 @@ function attach3DCardTilt(card, cardWrapper) {
     rafId = requestAnimationFrame(() => {
       rafId = null;
       if (!cachedRect) return;
+      if (currentTiltDeg <= 0) {
+        cardWrapper.style.transform = 'rotateX(0deg) rotateY(0deg)';
+        return;
+      }
       const x = clientX - cachedRect.left;
       const y = clientY - cachedRect.top;
       const centerX = cachedRect.width / 2;
       const centerY = cachedRect.height / 2;
       const percentX = (x - centerX) / centerX;
       const percentY = (y - centerY) / centerY;
-      const tiltX = -percentY * maxTiltDeg;
-      const tiltY = percentX * maxTiltDeg;
+      const tiltX = -percentY * currentTiltDeg;
+      const tiltY = percentX * currentTiltDeg;
       cardWrapper.style.transform = `rotateX(${tiltX.toFixed(2)}deg) rotateY(${tiltY.toFixed(2)}deg)`;
     });
   }, { passive: true });
@@ -3526,8 +3537,27 @@ document.querySelectorAll('.settings-tab').forEach(tab => {
 document.querySelector('#closeSettingsHeader').onclick = () => document.querySelector('#settingsDialog').close();
 document.querySelector('#closeSettings').onclick = () => document.querySelector('#settingsDialog').close();
 
+const tiltSlider = document.querySelector('#tiltSlider');
+const tiltVal = document.querySelector('#tiltVal');
+if (tiltSlider && tiltVal) {
+  tiltSlider.value = currentTiltDeg;
+  tiltVal.textContent = `${currentTiltDeg}°`;
+  tiltSlider.addEventListener('input', (e) => {
+    currentTiltDeg = parseInt(e.target.value, 10);
+    if (isNaN(currentTiltDeg)) currentTiltDeg = 0;
+    tiltVal.textContent = `${currentTiltDeg}°`;
+    try {
+      localStorage.setItem('dflowTiltSensitivity', String(currentTiltDeg));
+    } catch {}
+  });
+}
+
 document.querySelector('#settings').onclick = () => {
   const dialog = document.querySelector('#settingsDialog');
+  if (tiltSlider && tiltVal) {
+    tiltSlider.value = currentTiltDeg;
+    tiltVal.textContent = `${currentTiltDeg}°`;
+  }
   document.querySelector('#loginName').value = localStorage.loginName || '';
   document.querySelector('#loginKey').value = localStorage.loginKey || '';
   document.querySelector('#pixivCookie').value = localStorage.pixivCookie || '';
@@ -3917,8 +3947,50 @@ async function checkForUpdates() {
     const remoteCommit = result.latest?.commit ? String(result.latest.commit).slice(0, 7) : '\u8fdc\u7a0b\u7248\u672c';
     dialog.querySelector('.update-latest').textContent = `${remoteVersion}${remoteCommit}${result.latest.message ? ` \u00b7 ${result.latest.message}` : ''}`;
     dialog.dataset.remote = remote;
+    const statusText = dialog.querySelector('#updateStatusText');
+    if (statusText) { statusText.hidden = true; statusText.textContent = ''; statusText.className = 'update-status-text'; }
+    const nowBtn = dialog.querySelector('#updateNow');
+    if (nowBtn) { nowBtn.disabled = false; nowBtn.textContent = '一键拉取更新'; }
+    dialog.querySelectorAll('.update-dialog-actions button').forEach(b => b.disabled = false);
     dialog.showModal();
   } catch { /* GitHub unavailable should never interrupt browsing. */ }
+}
+const updateNowBtn = document.querySelector('#updateNow');
+if (updateNowBtn) {
+  updateNowBtn.onclick = async () => {
+    const dialog = document.querySelector('#updateDialog');
+    const statusText = dialog.querySelector('#updateStatusText');
+    const buttons = dialog.querySelectorAll('.update-dialog-actions button');
+    buttons.forEach(b => b.disabled = true);
+    updateNowBtn.textContent = '正在拉取...';
+    if (statusText) {
+      statusText.hidden = false;
+      statusText.className = 'update-status-text';
+      statusText.textContent = '正在从 GitHub 远程仓库拉取最新代码到本地...';
+    }
+    try {
+      const res = await fetch('/api/version/update', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || data.detail || '拉取失败');
+      }
+      if (statusText) {
+        statusText.className = 'update-status-text success';
+        statusText.textContent = '更新成功！正在自动刷新页面...';
+      }
+      updateNowBtn.textContent = '更新成功';
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (err) {
+      if (statusText) {
+        statusText.className = 'update-status-text error';
+        statusText.textContent = `更新失败: ${err.message}`;
+      }
+      buttons.forEach(b => b.disabled = false);
+      updateNowBtn.textContent = '重试更新';
+    }
+  };
 }
 document.querySelector('#updateLater').onclick = () => document.querySelector('#updateDialog').close();
 document.querySelector('#updateSkipOnce').onclick = () => { localStorage.setItem('dflowUpdateSkip', document.querySelector('#updateDialog').dataset.remote || ''); document.querySelector('#updateDialog').close(); };

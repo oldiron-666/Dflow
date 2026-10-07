@@ -1918,6 +1918,12 @@ nav::-webkit-scrollbar { display: none; }
 .update-dialog-actions button { border: 1px solid rgba(255,255,255,.14); border-radius: 8px; background: rgba(255,255,255,.07); color: #e8edf4; padding: 7px 10px; cursor: pointer; font-size: 12px; }
 .update-dialog-actions button:hover { background: rgba(255,255,255,.14); }
 .update-dialog-actions .danger { color: #fca5a5; }
+.update-now-btn { background: #3b82f6 !important; border-color: rgba(255,255,255,.24) !important; color: #fff !important; font-weight: 600; }
+.update-now-btn:hover { background: #2563eb !important; }
+.update-now-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.update-status-text { margin-top: 14px; padding: 8px 12px; border-radius: 8px; font-size: 12px; line-height: 1.4; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.25); color: #93c5fd; }
+.update-status-text.error { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); color: #fca5a5; }
+.update-status-text.success { background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.3); color: #86efac; }
 
 /* Non-image panel action bar (Worded & Completed folders) */
 .panel-actions-bar {
@@ -2959,8 +2965,48 @@ dialog.settings-modal:has(#tabMcp.active) { width: min(1100px, 96vw); }
 #dshBridgeStatus { display: block; margin: 6px 0; font-size: 11px; color: #a9bdd7; overflow-wrap: anywhere; }
 #dshSessions { max-height: 220px; overflow-y: auto; font-size: 12px; }
 #tabMcp #mcpConnectionConfig { font-size: 11px; resize: vertical; overflow-wrap: anywhere; }
-.mcp-save-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: flex-end; margin-top: 14px; }
+.mcp-save-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 14px; }
 .mcp-save-row .settings-desc { margin: 0 auto 0 0; font-size: 11px; }
+
+.tilt-control-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  font-size: 12px;
+  color: #e2e8f0;
+  user-select: none;
+  flex-shrink: 0;
+}
+.tilt-control-group label {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+  font-weight: 500;
+  margin: 0;
+  cursor: pointer;
+}
+.tilt-control-group input[type="range"] {
+  width: 90px;
+  height: 4px;
+  accent-color: #6366f1;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 2px;
+  cursor: pointer;
+  outline: none;
+  margin: 0;
+}
+.tilt-control-group .val-badge {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #a5b4fc;
+  min-width: 24px;
+  text-align: right;
+}
 @media (max-width: 700px) { .mcp-dashboard { grid-template-columns: minmax(0, 1fr); } .mcp-tile { min-height: 0; } .mcp-reverse, .mcp-expansion { min-height: 270px; } }
 
 .reverse-card.pending-card .reverse-actions { flex-wrap: wrap; }

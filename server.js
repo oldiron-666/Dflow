@@ -68,6 +68,23 @@ app.get("/api/version", async (_req, res) => {
   res.json({ ok: true, current: { version: currentVersion, commit: currentCommit }, latest, updateAvailable: commitChanged || versionChanged });
 });
 
+app.post("/api/version/update", async (_req, res) => {
+  try {
+    const pullOutput = execFileSync("git", ["pull", "origin", "main"], {
+      cwd: __dirname,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 30000
+    });
+    versionCheckCache = { at: 0, latest: null };
+    const currentVersion = getAppVersion();
+    const currentCommit = getLocalCommit();
+    res.json({ ok: true, output: pullOutput, current: { version: currentVersion, commit: currentCommit } });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "Git 拉取失败", detail: String(error.stderr || error.stdout || "") });
+  }
+});
+
 const DATA_DIR = process.env.DFLOW_DATA_DIR ? path.resolve(process.env.DFLOW_DATA_DIR) : path.join(__dirname, "data");
 const STATE_FILE = path.join(DATA_DIR, "dflow-state.json");
 const REVERSE_DIR = path.join(DATA_DIR, "reverse");
