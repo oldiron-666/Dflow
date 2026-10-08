@@ -94,7 +94,28 @@ const COMPLETED_IMAGE_DIR = path.join(DATA_DIR, "favorites", "completed");
 const WORDED_IMAGE_DIR = path.join(DATA_DIR, "favorites", "worded");
 const PRESET_FILE = path.join(DATA_DIR, PRESET_STORE);
 function readPresets() {
-  try { return readPresetLibrary(DATA_DIR); }
+  try {
+    const library = readPresetLibrary(DATA_DIR);
+    const defaults = presetDefaults();
+    let updated = false;
+    for (const def of defaults.expansion) {
+      if (!library.expansion.some(x => x.name === def.name)) {
+        library.expansion.push(def);
+        updated = true;
+      }
+    }
+    for (const def of defaults.reverse) {
+      if (!library.reverse.some(x => x.name === def.name)) {
+        library.reverse.push(def);
+        updated = true;
+      }
+    }
+    if (updated) {
+      try { return savePresetLibrary(DATA_DIR, library); }
+      catch (err) { console.warn('同步新内置预设到本地库失败:', err.message); }
+    }
+    return library;
+  }
   catch (error) {
     // Migrate the old combined JSON once. Never delete it: it is a safety backup.
     if (fs.existsSync(path.join(DATA_DIR, 'mcp-presets', 'config.json'))) {
@@ -372,7 +393,10 @@ async function dispatchDirectRequest(requestId) {
     return { ok: false, request: failed.request || started.request, error: failed.error || message };
   }
 }
-app.get('/api/mcp/presets', (_req,res)=>res.json(presets));
+app.get('/api/mcp/presets', (_req,res)=>{
+  presets = readPresets();
+  res.json(presets);
+});
 app.put('/api/mcp/presets', (req,res)=>{
   try {
     const next=validatePresets(req.body);

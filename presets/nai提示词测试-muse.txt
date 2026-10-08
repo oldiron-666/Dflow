@@ -1,0 +1,161 @@
+# 静谧电影感 · NAI 通用扩写预设（比赛版 vFinal）
+
+> 反推来源：25 条 NAI touhou 提示词（`nai____1_5d42.md`），逐条拆解共同点与差异点后收敛为**唯一一个**预设。
+> **通用声明：本预设不限东方、不绑定任何系列。** 美感 DNA（情绪/配色/构图/叙事/质感）与角色出处无关；角色保真靠"扩写前查 d 站 tag"解决，见第零步。
+> 一句话美学：**情绪先行 · 低饱和和谐配色 · 电影构图 · 微小叙事 · 胶片质感** —— 画面永远安静，故事永远只是一个小动作。
+
+---
+
+## 一、共同点（25 条里反复出现的 DNA）
+
+1. **painterly 打底，反塑料**：21/25 用 `painterly anime illustration`；其余 3 条用变体（`painterly imagery with photographic depth` / `minimalist fashion editorial illustration` / Kramskoy 油画风）。配套永远出现反光泽词：`matte fabric`、`low local contrast`、`restrained highlights`、`subdued fabric colors`。
+2. **情绪永远第一顺位**：mood 词出现在角色描述之后、场景之前；微表情精确到眼睑/嘴唇/目光（`lowered eyelids`、`pressed lips`、`distant gaze`）。25 条里 24 条是安静内敛的情绪，只有动作类是"放松的自信"。
+3. **配色是显性命名模块**：每条都有 2–4 个命名色，挂 `harmonious` / `muted` / `faded` / `subdued` / `smoky` 前缀，从不让 AI 自由发挥颜色。7 条用 `{ }` 把配色块括起来加权。
+4. **电影构图语法**：景别词（portrait / wide landscape / medium-long shot / close three-quarter viewpoint）+ 三分法站位（left edge / right third / slightly right of center）+ 前景遮挡（芦苇/帘幕/柳枝/雨窗/雾气）+ 负空间（negative space）。**没有一条是居中对称的。**
+5. **微小叙事**：纸风车、未封口的信封、萤火虫罐子、融雪水滴、剥橘子、叠衣服、缝玩偶、转苹果——故事永远是一个"悬置的小动作"，用 1–2 句完整散文句子写，不是姿势标签。
+6. **大气条件必备**：雾、夜、雨、黄昏、阴天——25 条里 23 条有明确的大气/时间设定。
+7. **胶片质感尾缀**：`subtle film grain` / `organic film grain` / `paper texture` / `faded analog colors` / `gentle halation` / `soft highlight diffusion`。
+8. **光线永远被命名**：`diffused evening light`、`weak moonlight filtering through clouds`、`warm window light`……且几乎全是柔和漫射光。
+9. **角色保真头**：`[角色tag], [版权tag]` + 精确到配饰的服装标签。原合集用 `touhou` + `original outfit`，通用版改为：角色 tag 与版权 tag **必须来自 d 站查询结果**（第零步），外观 tag 按 d 站 wiki 描述写，不凭记忆编 tag。
+
+## 一点五、第零步：d 站查人物 tag（强制，扩写前必做）
+
+> 已验证可行（2026-10-06 实测）：Danbooru wiki 页可直接读取，无需登录。
+
+1. 打开 `https://danbooru.donmai.us/wiki_pages/<角色英文名，下划线连接>`（如 `frieren`、`hakurei_reimu`）；若不确定拼写，先在 Danbooru 站内搜角色名找到 wiki 页。
+2. 从页面提取三样东西：
+   - **规范角色 tag**：页面标题即 tag 名（全小写、下划线，如 `frieren`）；
+   - **版权/系列 tag**：wiki 正文注明的系列名，转下划线格式（如 `sousou_no_frieren`）；
+   - **外观描述**：wiki 的外貌段落 → 翻译成标准外观 tag（发色发型、瞳色、种族特征、标志性服装单品）。
+3. 实测示例（Frieren 页返回）：角色 tag `frieren`；版权 `sousou_no_frieren`；外观：`long white hair, twintails, parted bangs, green eyes, pointy ears, elf`，服装：`striped shirt, white jacket, gold trim, white skirt, black belt, capelet, red gem, black pantyhose, brown boots, earrings, staff`。
+4. **原创角色**跳过本步，服装外观由用户灵感直接描述。
+5. 查不到 wiki 页的冷门角色：用 Danbooru tag 搜索页确认 tag 是否存在；不存在则按"原创角色"处理，不硬套近似 tag。
+10. **一句氛围收束**：结尾总有一句定调的话（`silent dreamlike stillness`、`a quiet feeling of letting go`……）。
+
+## 二、差异点（以及收敛决策）
+
+| 差异 | 分布 | 收敛决策 |
+|---|---|---|
+| 花括号指令式（7 条：Marisa 草甸、Yukari 帘幕、Chen、Reisen 长椅、Wriggle、Letty、Sakuya 雨窗）vs 稠密逗号流（其余） | 7 : 18 | **采用花括号式**：在 NAI 里 `{ }` 是加权强调，把情绪/配色/机位放进去既是组织也是权重策略，是更进化的形态，逗号流是它的子集 |
+| 静谧 contemplative（~20 条）vs 动态 action（Yuugi、Tenshi、Reimu 跳跃、Yukari 指挥 4 条：纯色背景+硬光+强透视） | 20 : 4 | 预设默认静谧模式；动态只做一个**开关行**（见规则 R9），不另立预设 |
+| 多角色分隔符 | 仅 Kanako/Suwako 用 `\|` | 预设内注明：多角色时用 `\|` 重复角色块 |
+| 古典油画特例（Kaguya 马车 `style of Ivan Kramskoy`） | 1 条 | 作为配色/笔触参考并入质感库，不单独成式 |
+
+---
+
+## 三、预设本体（唯一模板，直接填空）
+
+```
+1girl, solo, [d站角色tag], [d站版权tag], [发色发型], [眼睛/种族特征], [服装精确标签],
+
+{[情绪词1], [情绪词2]}, [眼睑/嘴唇/目光微表情], [姿态短语],
+
+[景别], [人物站位], [环境一句话],
+
+[微小叙事：两句完整散文句子。她做一个小动作，然后停顿/注视],
+
+[前景遮挡层], [背景纵深层],
+
+{harmonious [命名色1], [命名色2] and [命名色3]}, [光线], [材质词],
+
+painterly anime illustration, [渲染质感标签], subtle film grain, [氛围收束语]
+```
+
+### 填空词库（全部取自 25 条原文，只选不造）
+
+**情绪词**：`quiet melancholy` / `dreamlike melancholy` / `quiet contemplation` / `wistful expression` / `melancholic distance` / `quiet introspection` / `intimate solitude` / `lingering wistfulness` / `quiet loneliness` / `elusive presence` / `hesitation` / `calm self-contained` / `distant pensive` / `serene` / `quietly confident` / `unhurried`
+
+**微表情**：`lowered eyelids` / `tired eyelids` / `half-lidded eyes` / `lowered gaze` / `distant gaze` / `pressed lips` / `softly closed mouth` / `gentle closed mouth` / `slightly downturned mouth` / `relaxed shoulders` / `shoulders lowered` / `restrained expression`
+
+**景别**：`portrait composition` / `wide landscape composition` / `wide horizontal composition` / `medium-long shot` / `medium shot` / `close three-quarter viewpoint` / `high oblique viewpoint` / `eye-level three-quarter viewpoint` / `slightly elevated close viewpoint`
+
+**站位**：`character near the left edge` / `character on the right third` / `character slightly right of center` / `figure left of center` / `figure small in the lower left` / `generous negative space` / `empty air occupying the left side`
+
+**前景遮挡**：`layered tree trunks fading into thick mist` / `willow branches hanging into the foreground` / `tall reeds obscuring portions of her shoulders` / `low-luminance fog drifting across her waist` / `softly blurred leaves at the lower edge` / `large translucent droplets, wavering refraction` / `viewed through several overlapping translucent curtains` / `viewed from outside through a rain-covered window` / `mist concealing the lower half of her dress` / `fog concealing her lower body`
+
+**大气/时间**：`dense fog` / `thick mist` / `light rain` / `at deep night` / `at midnight` / `at dusk` / `diffused cloudy afternoon` / `soft overcast daylight` / `thawing field, patches of snow` / `a few faint fireflies`
+
+**配色方案（整套直接抄）**：
+- 夜雾：`smoky violet and near-black` / `lavender gray, muted brown and warm paper white` / `subdued olive-black and charcoal`
+- 黄昏：`dusk violet, soft charcoal, muted gold and ivory` / `pearl gray, dusty lavender, pale gold and faint wine red`
+- 雨雪：`snow gray, pale lavender and muted stone blue` / `slate blue, silver gray and subdued ivory`
+- 田野：`olive gray, muted sage and faded straw yellow`
+- 旧屋：`faded red, gray-green and weathered cedar brown` / `charcoal brown, pearl gray and faded burgundy`
+- 日常暖：`pale blue and cream` / `straw-colored tatami, soft pink accents` / `warm wood tones, lavender-gray shadows`
+
+**光线**：`soft overcast light` / `diffused evening light` / `diffused cloudy afternoon light` / `weak moonlight filtering through clouds` / `faint cloud-muted moonlight as the sole light source` / `warm window light across the tabletop` / `mild afternoon light filtering through leaves` / `gentle reflected light on her face` / `diffuse daylight transmitted through cloth` / `soft rim light along her hair edges`
+
+**渲染质感**：`delicate face` / `delicate hands and eyes` / `fine facial details` / `precise facial details` / `softly layered colors` / `layered translucent color` / `controlled edges` / `restrained highlights` / `thin expressive outlines` / `minimal contour lines` / `softly modeled hair` / `matte fabric` / `atmospheric background edges` / `softly brushed background foliage` / `broad atmospheric brushwork` / `fine selective linework` / `faded analog colors` / `soft highlight diffusion` / `gentle halation` / `subtle paper texture` / `organic paper texture` / `atmospheric depth` / `refined depth`
+
+**氛围收束语**：`quiet mysterious depth` / `silent dreamlike stillness` / `intimate enigmatic atmosphere` / `suspended anticipation` / `a quiet sense of seasonal farewell` / `a quiet feeling of letting go` / `intimate solitude` / `lingering wistfulness` / `mysterious enclosed stillness` / `gentle everyday stillness` / `ordinary peaceful household atmosphere` / `quiet domestic comfort` / `unhurried afternoon`
+
+### 铁律（比赛判分点，违反即扣分）
+
+- **R0 先查 tag 再扩写**：有出处的角色必须先走第零步，角色 tag、版权 tag 以 d 站查询结果为准，禁止凭记忆编 tag；原创角色跳过本步。
+- **R1 情绪第一**：情绪块永远紧跟角色头，花括号加权；表情必须写到眼睑/嘴唇/目光一级。
+- **R2 配色显性**：必须命名 2–4 个低饱和色并用 `harmonious` 统领，绝不留给 AI 自由发挥。
+- **R3 拒绝居中**：人物永远偏离中心，至少给一处负空间或空旷侧。
+- **R4 微小叙事**："她 + 一个小动作 + 一个停顿/注视"，两句完整句子，禁止写成姿势标签堆叠。
+- **R5 纵深三层**：前景遮挡层 + 人物层 + 背景纵深层，至少占其二。
+- **R6 光线具名**：光线必须写出具体来源与质地，默认柔和漫射。
+- **R7 反塑料**：质感段必含 `film grain` 或 `paper texture` 二选一，外加 `restrained highlights` / `matte` 系。
+- **R8 一句收束**：结尾一句氛围词定调，不多不少。
+- **R9 动态开关（默认关闭）**：如需动作感，将"配色+光线"两行整体替换为：`solid [vivid coral / pale ochre / turquoise] background, hard ivory highlights, strong foreshortening, clear powerful silhouette`。
+- **R10 多角色**：角色头用 `|` 分隔重复（参考 Kanako/Suwako 条），其余结构不变。
+
+### 负面提示词（建议）
+
+```
+glossy, oversaturated, high contrast, harsh bloom, plastic skin, sharp digital look, busy background, centered symmetrical composition, cluttered, deformed hands, empty expression
+```
+
+---
+
+## 四、演示：预设实战（灵感 → 完整提示词）
+
+**演示 1 · 灵感**：「蓝发飒系小师妹，山门前暮色，赤足」
+
+```
+1girl, solo, original character, very long blue hair, cool sharp eyes, black thigh-high stockings, bare feet, dark cultivation sect disciple robes with silver trim,
+
+{quiet confidence, composed power}, calm steady gaze, relaxed mouth, upright unhurried posture,
+
+wide landscape composition, medium-long shot, character standing slightly right of center before towering sect gates at dusk, massive weathered stone gate occupying the left half, long steps descending into mist, distant peaks fading into haze,
+
+She stands barefoot on the cold stone, one hand resting lightly on the sword hilt at her waist. Her long hair lifts in the mountain wind as she looks past the viewer toward the road below, unhurried.
+
+low-luminance fog drifting across the steps, pine branches softened by haze at the upper edge,
+
+{harmonious slate blue, muted ink black and pale silver}, diffused dusk light, soft rim light along her hair edges, deep soft shadows pooling on the steps,
+
+painterly anime illustration, delicate face, flowing hair strands, softly layered colors, controlled edges, restrained highlights, subtle film grain, generous negative space, still commanding presence
+```
+
+**演示 2 · 灵感**：「芙莉莲，雨后森林空地，法杖」（先走第零步：d 站 wiki 查得角色 tag `frieren`、版权 `sousou_no_frieren`、外观如 R0 示例）
+
+```
+1girl, solo, frieren, sousou_no_frieren, long white hair, twintails, parted bangs, green eyes, pointy ears, elf, striped black-and-white shirt, white jacket with gold embellishments, white skirt, black belt, gold-trimmed white capelet with red gem, black pantyhose, brown boots, mage staff,
+
+{quiet melancholy, absorbed stillness}, lowered eyelids, softly closed mouth, relaxed shoulders,
+
+wide horizontal composition, character seated near the left edge in a rain-washed forest clearing at dusk, her mage staff planted upright in the wet earth beside her, puddles mirroring the gray sky, tall dark trunks receding into mist,
+
+She sits with one hand resting loosely around the staff, the other turning a small brass ring on her finger. A drop of rain falls from a leaf onto the back of her hand and she watches it without wiping it away.
+
+low ferns blurring into the foreground at the lower edge, layered tree trunks fading into thick mist behind her,
+
+{harmonious muted sage, wet charcoal and pale silver}, diffused dusk light after rain, soft reflected light on her face, gentle shadows pooling between the roots,
+
+painterly anime illustration, delicate face, fine facial details, softly layered colors, controlled edges, restrained highlights, matte fabric, subtle film grain, generous negative space, lingering wistfulness
+```
+
+---
+
+## 五、比赛使用流程
+
+0. 有出处的角色先查 d 站 tag（第零步）；原创角色跳过。
+1. 把灵感写成一句话（角色 + 场景 + 一个小动作倾向）。
+2. 按模板 7 个空位依次填：角色头（d 站 tag）→ 情绪块 → 构图 → 微小叙事 → 纵深 → 配色光线 → 质感收束。
+3. 对照 R0–R10 自检一遍，缺哪条补哪条。
+4. 负面提示词照抄进 negative prompt。
+5. NAI 参数建议：宽幅构图时 aspect ratio 选横构图；`{ }` 块即加权，无需额外括号套娃。

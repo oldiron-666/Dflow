@@ -9,7 +9,14 @@ export const PRESET_STORE = 'mcp-presets.json';
 export function presetDefaults() {
   const presetsDir = path.join(project, 'presets');
   const expansionList = [];
-  const preferredOrder = ['通用扩写', '插画', '电影感动漫', '动漫海报', '巨构提示词'];
+  const preferredOrder = [
+    '通用扩写', '插画', '电影感动漫', '动漫海报', '巨构提示词',
+    'nai提示词测试-Antigravity',
+    'nai提示词测试-ChatGPT',
+    'nai提示词测试-deepseekv4pro',
+    'nai提示词测试-gemini3.8flash',
+    'nai提示词测试-muse'
+  ];
   const loaded = new Set();
   if (fs.existsSync(presetsDir)) {
     for (const name of preferredOrder) {
