@@ -23,3 +23,11 @@ temp_prompt_*.txt
 # Generated one-off reverse/automation scratch files
 temp_auto_*.txt
 ANTIGRAVITY_DFLOW_REFACTOR_GUIDE.md
+
+# Publish only these built-in expansion presets; all other local files stay private.
+presets/*
+!presets/通用扩写.txt
+!presets/插画.txt
+!presets/电影.txt
+!presets/海报.txt
+!presets/巨构提示词.txt

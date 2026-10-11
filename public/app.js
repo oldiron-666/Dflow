@@ -1,3 +1,4 @@
+import { sortableTime, displayQueueOrder, pendingQueueActive, comparePendingRows, galleryItemTime, galleryOrientation, compareGalleryItems, responsiveColumnCount, compactRowSpan, queueGridPlacements } from './gallery-rules.js';
 const gallery = document.querySelector('#gallery');
 const sentinel = document.querySelector('#sentinel');
 const statusEl = document.querySelector('#status');
@@ -150,25 +151,85 @@ function ratingChecks() {
   return [...document.querySelectorAll('.rating-menu input:checked')].map(x => x.value);
 }
 function columnCount() {
-  return forcedCols || (+getComputedStyle(document.documentElement).getPropertyValue('--cols') || 5);
+  const styles = getComputedStyle(gallery);
+  const width = gallery.clientWidth - (parseFloat(styles.paddingLeft) || 0) - (parseFloat(styles.paddingRight) || 0);
+  return responsiveColumnCount(width, forcedCols || 5);
 }
+function updateGalleryColumnSize() {
+  const count = columnCount();
+  gallery.style.setProperty('--gallery-cols', count);
+  updateColumnLabel();
+  return count;
+}
+let compactLayoutFrame = 0;
+const compactObservedCards = new Set();
+const compactCardObserver = window.ResizeObserver ? new ResizeObserver(() => scheduleCompactLayout()) : null;
+function scheduleCompactLayout() {
+  if (!state.ordered || compactLayoutFrame) return;
+  compactLayoutFrame = requestAnimationFrame(() => {
+    compactLayoutFrame = 0;
+    layoutOrderedGallery();
+  });
+}
+function layoutOrderedGallery() {
+  if (!state.ordered) return;
+  const styles = getComputedStyle(gallery);
+  const rowHeight = parseFloat(styles.gridAutoRows) || 4;
+  const gap = parseFloat(styles.getPropertyValue('--gallery-card-gap')) || 10;
+  const cards = [...gallery.children];
+  for (const card of compactObservedCards) {
+    if (card.parentElement !== gallery) {
+      compactCardObserver?.unobserve(card);
+      compactObservedCards.delete(card);
+    }
+  }
+  const pending = gallery.dataset.folder === 'pending';
+  const columns = Math.max(1, Number(gallery.style.getPropertyValue('--gallery-cols')) || 1);
+  // On resize, stale column indices would create implicit columns and measure
+  // cards at the wrong width. Set every lane first, then measure in one batch.
+  if (pending) cards.forEach((card, index) => {
+    const column = String(index % columns + 1);
+    if (card.style.gridColumnStart !== column) card.style.gridColumnStart = column;
+  });
+  // Batch all height reads before position writes. Measure the article, not
+  // the tilted wrapper: hover/flip transforms must never resize the layout.
+  const spans = cards.map(card => compactRowSpan(card.offsetHeight, rowHeight, gap));
+  const placements = pending ? queueGridPlacements(spans, columns) : null;
+  cards.forEach((card, index) => {
+    if (placements) {
+      const {column, row} = placements[index];
+      if (card.style.gridColumnStart !== String(column)) card.style.gridColumnStart = String(column);
+      if (card.style.gridRowStart !== String(row)) card.style.gridRowStart = String(row);
+    } else {
+      card.style.removeProperty('grid-column-start');
+      card.style.removeProperty('grid-row-start');
+    }
+    const span = `span ${spans[index]}`;
+    if (card.style.gridRowEnd !== span) card.style.gridRowEnd = span;
+    if (!compactObservedCards.has(card)) {
+      compactCardObserver?.observe(card, {box:'border-box'});
+      compactObservedCards.add(card);
+    }
+  });
+}
+// Image load/error can change natural height, including in older browsers
+// without ResizeObserver. Capture one gallery listener rather than one/card.
+gallery.addEventListener('load', scheduleCompactLayout, true);
+gallery.addEventListener('error', scheduleCompactLayout, true);
 function resetColumns() {
-  gallery.innerHTML = '';
+  cancelAnimationFrame(compactLayoutFrame);
+  compactLayoutFrame = 0;
+  compactCardObserver?.disconnect();
+  compactObservedCards.clear();
+  gallery.replaceChildren();
+  delete gallery.dataset.folder;
   state.columns = [];
   state.heights = [];
-  state.ordered = false;
-  gallery.classList.toggle('ordered-gallery', false);
-  const count = innerWidth <= 760 ? Math.min(columnCount(), 2) : columnCount();
-  gallery.style.setProperty('--gallery-cols', count);
-  if (state.ordered) {
-    const styles = getComputedStyle(gallery);
-    const horizontalPadding = (parseFloat(styles.paddingLeft) || 0) + (parseFloat(styles.paddingRight) || 0);
-    const gap = parseFloat(styles.columnGap || styles.gap) || 8;
-    const contentWidth = Math.max(1, gallery.clientWidth - horizontalPadding);
-    const cardSize = Math.max(1, (contentWidth - gap * (count - 1)) / count);
-    gallery.style.setProperty('--ordered-card-size', cardSize + 'px');
-    return;
-  }
+  state.cards = [];
+  state.ordered = mode === 'favorites';
+  gallery.classList.toggle('ordered-gallery', state.ordered);
+  const count = updateGalleryColumnSize();
+  if (state.ordered) return;
   for (let i = 0; i < count; i++) {
     const column = document.createElement('div');
     column.className = 'column';
@@ -177,12 +238,28 @@ function resetColumns() {
     state.heights.push(0);
   }
 }
+function reflowGallery() {
+  const count = updateGalleryColumnSize();
+  if (state.ordered) { layoutOrderedGallery(); return; }
+  if (state.columns.length === count) return;
+  const cards = (state.cards || []).filter(card => card.isConnected);
+  const columns = Array.from({length: count}, () => {
+    const node = document.createElement('div'); node.className = 'column'; return node;
+  });
+  const heights = columns.map(() => 0);
+  for (const card of cards) {
+    const index = heights.indexOf(Math.min(...heights));
+    columns[index].append(card); heights[index] += card._galleryWeight || 1;
+  }
+  gallery.replaceChildren(...columns);
+  state.columns = columns; state.heights = heights; state.cards = cards;
+}
 function setColumns(count) {
   forcedCols = Math.max(3, Math.min(8, Number(count) || 5));
   document.documentElement.style.setProperty('--cols', forcedCols);
   updateColumnLabel();
   schedulePreferenceSave();
-  load(true);
+  reflowGallery();
 }
 function updateColumnLabel() {
   const button = document.querySelector('#columnButton');
@@ -237,7 +314,8 @@ function queryTags(rating = '') {
 function authHeaders() {
   const headers = {};
   if (localStorage.loginName && localStorage.loginKey) {
-    headers['X-Danbooru-Username'] = localStorage.loginName;
+    headers['X-Danbooru-Username'] = encodeURIComponent(localStorage.loginName);
+    headers['X-DFlow-Auth-Encoding'] = 'uri';
     headers['X-Danbooru-Key'] = localStorage.loginKey;
   }
   return headers;
@@ -326,6 +404,19 @@ function imageSrc(url) {
 function favoriteCacheSrc(id, version = '') {
   const suffix = version ? `?v=${encodeURIComponent(String(version))}` : '';
   return `/api/reverse/image/${encodeURIComponent(String(id))}${suffix}`;
+}
+function thumbnailSrc(source) {
+  if (!source) return '';
+  return `${source}${source.includes('?') ? '&' : '?'}thumbnail=1`;
+}
+function originalImageSrc(source) {
+  if (!source) return '';
+  const url = new URL(source, document.baseURI);
+  if (url.origin === location.origin && /^\/api\/(reverse\/image|worded\/images|metadata\/images)\//.test(url.pathname)) {
+    url.searchParams.delete('thumbnail');
+    return `${url.pathname}${url.search}`;
+  }
+  return source;
 }
 function wordedImageSrc(item) {
   if (!item?.imageExt) return '';
@@ -980,55 +1071,15 @@ function updateFavoriteCount() {
   }
   updateShareActions();
 }
+function updateFavoriteButton(button, active) {
+  if (button.classList.contains('active') !== active) button.innerHTML = active ? HEART_SVG : HEART_OUTLINE_SVG;
+  button.classList.toggle('active', active);
+  button.title = active ? '取消收藏' : '加入本地收藏';
+  button.setAttribute('aria-label', button.title);
+}
 function updateFavoriteButtons(id) {
   const active = isFavorite(id);
-  document.querySelectorAll(`[data-favorite-id="${CSS.escape(String(id))}"]`).forEach(button => {
-    button.innerHTML = active ? HEART_SVG : HEART_OUTLINE_SVG;
-    button.classList.toggle('active', active);
-    button.title = active ? '取消收藏' : '加入本地收藏';
-    button.setAttribute('aria-label', button.title);
-  });
-}
-function sortableTime(value) {
-  if (!value) return 0;
-  const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) return numeric;
-  const parsed = Date.parse(String(value));
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-const MAX_DISPLAY_QUEUE_ORDER = 1000000;
-function displayQueueOrder(value) {
-  const number = Number(value);
-  return Number.isSafeInteger(number) && number > 0 && number <= MAX_DISPLAY_QUEUE_ORDER ? number : null;
-}
-function pendingQueueActive(item) {
-  return item?.autoEnabled !== false;
-}
-function comparePendingRows(a, b) {
-  const aActive = pendingQueueActive(a.value);
-  const bActive = pendingQueueActive(b.value);
-  if (aActive !== bActive) return Number(!aActive) - Number(!bActive);
-  if (aActive) {
-    return (displayQueueOrder(a.value.queueOrder) ?? Infinity) - (displayQueueOrder(b.value.queueOrder) ?? Infinity) || a.index - b.index;
-  }
-  return a.index - b.index;
-}
-function galleryItemTime(item, folder) {
-  // Worded keeps prompt chronology; completed keeps the release chronology.
-  const values = folder === 'completed'
-    ? [item.completedAt, item.promptWrittenAt, item.wordedAt, item.createdAt, item.created_at]
-    : [item.promptWrittenAt, item.wordedAt, item.createdAt, item.created_at];
-  return values.map(sortableTime).find(value => value > 0) || 0;
-}
-function galleryOrientation(item) {
-  const width = Number(item.image_width ?? item.width ?? 0);
-  const height = Number(item.image_height ?? item.height ?? 0);
-  return width > height ? 1 : 0;
-}
-function compareGalleryItems(a, b, folder, indexA = 0, indexB = 0) {
-  return galleryOrientation(b) - galleryOrientation(a) ||
-    galleryItemTime(b, folder) - galleryItemTime(a, folder) ||
-    indexA - indexB;
+  document.querySelectorAll(`button[data-favorite-id="${CSS.escape(String(id))}"]`).forEach(button => updateFavoriteButton(button, active));
 }
 function favoriteVisibleItems() {
   return readFavorites()
@@ -1099,12 +1150,13 @@ function removeVisibleCard(id) {
     return;
   }
   card.remove();
+  state.cards = (state.cards || []).filter(node => node !== card);
   currentPosts = currentPosts.filter(post => String(post.id) !== String(id));
 
-  // Ordered worded/completed galleries can reflow in place. Removing one grid
-  // child automatically fills the gap and keeps every other image element,
-  // scroll position, and decoded bitmap alive.
+  // Keep sorted DOM and decoded images. Existing row spans let the compact
+  // grid fill the removed slot immediately; prune the size observer next frame.
   if (state.ordered) {
+    scheduleCompactLayout();
     updateVisibleFolderStatus();
     requestAnimationFrame(() => scrollTo({ top }));
     return;
@@ -1459,7 +1511,7 @@ async function load(reset = false) {
     const setImageSource = () => {
       const useCache = isOriginalFavorite && post.cacheStatus === 'ready';
       const nextSource = useCache
-        ? favoriteCacheSrc(post.id, post.cacheFile || post.updatedAt || '')
+        ? thumbnailSrc(favoriteCacheSrc(post.id, post.cacheFile || post.updatedAt || ''))
         : (remoteSources[0] || '');
       if (nextSource === selectedSource) return;
       selectedSource = nextSource;
@@ -1596,7 +1648,9 @@ async function load(reset = false) {
   }
 }
 function appendRenderedCard(card, weight = 1) {
-  if (state.ordered) { gallery.append(card); return; }
+  card._galleryWeight = weight;
+  (state.cards ||= []).push(card);
+  if (state.ordered) { gallery.append(card); scheduleCompactLayout(); return; }
   const index = state.heights.indexOf(Math.min(...state.heights));
   state.columns[index].append(card); state.heights[index] += weight;
 }
@@ -1703,10 +1757,11 @@ let currentTiltDeg = (() => {
     const saved = localStorage.getItem('dflowTiltSensitivity');
     if (saved !== null && !isNaN(Number(saved))) return Number(saved);
   } catch {}
-  return 13;
+  return 6;
 })();
 
 function attach3DCardTilt(card, cardWrapper) {
+  if (matchMedia('(prefers-reduced-motion: reduce), (pointer: coarse)').matches) return;
   let cachedRect = null;
   let rafId = null;
 
@@ -1811,11 +1866,12 @@ function renderReverseCard(item, options = {}) {
   const remoteSources = isWordedEntry ? [] : [...new Set([
     item.preview_file_url, item.large_file_url, item.file_url
   ].filter(Boolean).map(imageSrc).filter(Boolean))];
-  const imageUrl = isWordedEntry
+  const originalUrl = isWordedEntry
     ? wordedImageSrc(item)
     : cachedImage
       ? favoriteCacheSrc(item.id, item.cacheFile || item.updatedAt || '')
       : (remoteSources[0] || '');
+  const imageUrl = cachedImage ? thumbnailSrc(originalUrl) : originalUrl;
   const hasImage = Boolean(imageUrl || remoteSources.length);
 
   const card = document.createElement('article');
@@ -1874,6 +1930,9 @@ function renderReverseCard(item, options = {}) {
     summary.className = 'text-summary';
     summary.textContent = item.summary || prompt.slice(0, 30) || '暂无图片';
     artworkContainer.append(summary);
+    const addImage=document.createElement('button');addImage.type='button';addImage.className='btn-subtle add-card-image';addImage.textContent='添加图片';
+    addImage.onclick=event=>{event.stopPropagation();showPromptDialog(prompt,{kind:isWordedEntry?'worded':'favorite',id:item.id,summary:item.summary},()=>refreshGallery());};
+    artworkContainer.append(addImage);
   }
 
   // Front UI strip (紧贴画芯，高斯模糊底色)
@@ -2192,13 +2251,10 @@ function renderReverseCard(item, options = {}) {
       } catch (err) { toast(`扩写预设保存失败：${err.message}`); }
     };
 
-    document.addEventListener('click', (e) => {
-      if (!presetDropdownWrap.contains(e.target)) {
-        presetMenuList.hidden = true;
-        presetBarClickable.classList.remove('open');
-        presetBarClickable.setAttribute('aria-expanded', 'false');
-      }
-    });
+    presetDropdownWrap._closeMenu = () => {
+      presetMenuList.hidden = true; presetBarClickable.classList.remove('open');
+      presetBarClickable.setAttribute('aria-expanded', 'false');
+    };
 
     presetDropdownWrap.append(presetBarClickable, presetMenuList);
 
@@ -2293,11 +2349,10 @@ function renderReverseCard(item, options = {}) {
     promptFullBox.addEventListener('blur', async () => {
       const newVal = promptFullBox.textContent.trim();
       if (newVal !== prompt) {
-        prompt = newVal;
-        if (isWordedEntry) item.positive = newVal;
-        else item.prompt = newVal;
         try {
-          await patchState({[isWordedEntry ? 'positive' : 'prompt']: newVal});
+          const saved = await patchState({[isWordedEntry ? 'positive' : 'prompt']: newVal});
+          Object.assign(item, saved);
+          prompt = newVal;
           toast('提示词已同步保存');
         } catch (err) { toast(`保存失败：${err.message}`); }
       }
@@ -2604,14 +2659,15 @@ function showPromptDialog(prompt, target, onSaved, options = {}) {
       session.imageFile=file; session.objectUrl=URL.createObjectURL(file);
       preview.src=session.objectUrl; preview.hidden=false; placeholder.hidden=true;
       save.disabled = !text.value.trim();
+      save.textContent = '保存图片和提示词';
     };
     chooser.onchange=()=>{if(chooser.files[0])setImage(chooser.files[0]);chooser.value='';};
     picture.onclick=e=>{if(e.target!==summary)chooser.click();};
     picture.ondragover=e=>{if(e.dataTransfer?.types.includes('Files'))e.preventDefault();};
     picture.ondrop=e=>{e.preventDefault();e.stopPropagation();setImage([...e.dataTransfer.files].find(x=>x.type.startsWith('image/')));};
-    workspace.addEventListener('paste', e=>{
+    document.addEventListener('paste', e=>{
       if (!dialog.open || !dialog.promptSession || dialog.promptSession.target.kind === 'metadata') return;
-      const file=[...e.clipboardData.items].find(x=>x.type.startsWith('image/'))?.getAsFile();
+      const file=[...(e.clipboardData?.items || [])].find(x=>x.type.startsWith('image/'))?.getAsFile();
       if(file){e.preventDefault();setImage(file);}
     });
     picture.append(preview,placeholder,summary,chooser);
@@ -2757,7 +2813,7 @@ function openLightbox(post, card, imageUrl = '') {
     lightboxFetchAbort = null;
   }
 
-  lightboxImage.src = imageUrl || getLightboxPageSrc(post, 0) || imageSrc(hiRes(post));
+  lightboxImage.src = originalImageSrc(imageUrl) || getLightboxPageSrc(post, 0) || imageSrc(hiRes(post));
   lightbox.classList.remove('hidden');
   lightbox.setAttribute('aria-hidden', 'false');
   updateLightboxPagination();
@@ -2868,8 +2924,9 @@ lightbox.addEventListener('click', event => {
   if (event.target === lightbox || event.target.id === 'lightboxClose') closeLightbox();
 });
 window.addEventListener('resize', () => {
-  // Tablet browser chrome expands/collapses the viewport and fires resize many
-  // times. Reposition the open preview only; never rebuild the gallery here.
+  // Only redistribute existing nodes on width changes; never refetch images.
+  cancelAnimationFrame(window.dflowResizeFrame);
+  window.dflowResizeFrame = requestAnimationFrame(reflowGallery);
   if (!lightbox.classList.contains('hidden') && previewPost) placeLightbox(previewCard, previewPost);
 });
 document.addEventListener('keydown', event => {
@@ -3347,6 +3404,7 @@ document.querySelector('#clearBtn').onclick = () => {
 };
 document.querySelector('#refresh').onclick = () => { viewCache.delete(viewKey()); load(true); };
 document.addEventListener('click', event => {
+  gallery.querySelectorAll('.preset-dropdown-wrap').forEach(wrap => {if(!wrap.contains(event.target))wrap._closeMenu?.();});
   if (!menu.contains(event.target)) menu.classList.add('hidden');
   if (!event.target.closest('.rating-picker')) {
     const picker = document.querySelector('#ratingPicker');
@@ -3566,16 +3624,23 @@ document.querySelector('#saveMcpPresets').onclick=async()=>{
     presetConfig=result;status.textContent='已保存';renderMcpPresets();if(mode==='favorites'&&favoriteFolder==='pending')refreshFavoriteGallery(true);
   }catch(error){status.textContent='保存失败：'+error.message;}
 };
+let mcpRefreshBusy = false, mcpRenderKey = '', dshRefreshBusy = false, dshRenderKey = '';
 async function refreshMcpSessions(){
+  if (mcpRefreshBusy) return;
+  mcpRefreshBusy = true;
   const container=document.querySelector('#mcpSessions');
   try {
-    const response=await fetch('/api/mcp/sessions',{cache:'no-store'});
+    const response=await fetch('/api/mcp/sessions',{cache:'no-store',signal:AbortSignal.timeout(8000)});
     const result=await response.json();
     if(!response.ok)throw Error(result.error||`HTTP ${response.status}`);
-    const targetResponse=await fetch('/api/mcp/direct-target',{cache:'no-store'});
+    const targetResponse=await fetch('/api/mcp/direct-target',{cache:'no-store',signal:AbortSignal.timeout(8000)});
     const targetState=await targetResponse.json().catch(()=>({}));
-    const targetId=String(targetState.sessionId || localStorage.getItem(DIRECT_SESSION_KEY) || '');
+    const targetId=String(targetState.sessionId || '');
     if (targetId) localStorage.setItem(DIRECT_SESSION_KEY,targetId);
+    else localStorage.removeItem(DIRECT_SESSION_KEY);
+    const key=JSON.stringify([targetId,result.map(({id,name,version,since})=>({id,name,version,since}))]);
+    if(key===mcpRenderKey) return;
+    mcpRenderKey=key;
     container.replaceChildren();
     if(!result.length){
       container.textContent=targetId ? '当前没有连接中的 Agent（已保留原直推目标）' : '当前没有连接中的 Agent';
@@ -3611,24 +3676,28 @@ async function refreshMcpSessions(){
       try { await fetch('/api/mcp/direct-target',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:''})}); } catch {}
       localStorage.removeItem(DIRECT_SESSION_KEY); refreshMcpSessions();
     }; container.append(clear);
-  }catch(error){container.textContent='读取连接失败：'+error.message;}
+  }catch(error){mcpRenderKey='';container.textContent='读取连接失败：'+error.message;} finally {mcpRefreshBusy=false;}
 }
-async function refreshDshSessions(){
+async function refreshDshSessions(force = false){
+  if(dshRefreshBusy) return;
+  dshRefreshBusy = true;
   const container=document.querySelector('#dshSessions');
   const status=document.querySelector('#dshBridgeStatus');
-  if(!container || !status) return;
-  container.textContent='正在读取 DSH 窗口…';
+  if(!container || !status) {dshRefreshBusy=false;return;}
   try {
-    const response=await fetch('/api/dsh/status',{cache:'no-store'});
+    const response=await fetch('/api/dsh/sessions'+(force===true?'?refresh=1':''),{cache:'no-store',signal:AbortSignal.timeout(10000)});
     const result=await response.json().catch(()=>({}));
     if(!response.ok && !result.error) throw Error(`HTTP ${response.status}`);
+    const key=JSON.stringify(result);
+    if(key===dshRenderKey)return;
+    dshRenderKey=key;
     container.replaceChildren();
     if(!result.available){
       status.textContent=`DSH Bridge 不可用：${result.error || '请先启动 DSH Desktop'}`;
       container.textContent='暂时无法读取 DSH 窗口；AI直推任务仍会保留在 MCP 队列。';
       return;
     }
-    status.textContent=result.configuredSessionId ? `已连接 · 固定窗口：${result.configuredTitle || result.configuredSessionId}` : '已连接 · 只有一个在线窗口时会自动使用它';
+    status.textContent=result.configuredSessionId ? `已连接 · 固定窗口：${result.configuredTitle || result.configuredSessionId}` : '已连接 · 自动使用最近活跃的在线窗口';
     const sessions=Array.isArray(result.sessions)?result.sessions:[];
     if(!sessions.length){container.textContent='没有找到 DSH 聊天窗口';return;}
     for(const session of sessions){
@@ -3641,16 +3710,17 @@ async function refreshDshSessions(){
       actions.append(choose);row.append(label,actions);container.append(row);
     }
     const clear=document.createElement('button');clear.type='button';clear.className='btn-subtle mcp-clear-target';clear.textContent='取消固定 DSH 窗口';clear.disabled=!result.configuredSessionId;clear.onclick=async()=>{try{await fetch('/api/dsh/target',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:''})});refreshDshSessions();}catch(error){toast(`清除 DSH 窗口失败：${error.message}`)}};container.append(clear);
-  }catch(error){status.textContent='DSH 状态读取失败';container.textContent=error.message;}
+  }catch(error){dshRenderKey='';status.textContent='DSH 状态读取失败';container.textContent=error.message;} finally {dshRefreshBusy=false;}
 }
 document.querySelector('#refreshMcpSessions').onclick=refreshMcpSessions;
-document.querySelector('#refreshDshSessions').onclick=refreshDshSessions;
+document.querySelector('#refreshDshSessions').onclick=()=>refreshDshSessions(true);
 document.querySelector('#copyMcpConfig').onclick=async()=>{try{await copyTextToClipboard(document.querySelector('#mcpConnectionConfig').value);toast('已复制 MCP 连接配置');}catch(error){toast('复制失败：'+error.message)}};
 fetch('/api/mcp/setup').then(response=>response.json()).then(config=>{
   if(!config.args)throw Error('只能在运行 DFlow 的电脑上查看连接配置');
   document.querySelector('#mcpConnectionConfig').value=JSON.stringify({mcpServers:{'dflow-local':{command:config.command,args:config.args,env:{DFLOW_PORT:String(config.port)}}}},null,2);
 }).catch(error=>{document.querySelector('#mcpConnectionConfig').value=error.message;});
-setInterval(()=>{if(document.querySelector('#settingsDialog').open&&document.querySelector('#tabMcp').classList.contains('active')){refreshMcpSessions();refreshDshSessions();}},6000);
+setInterval(()=>{if(!document.hidden&&document.querySelector('#settingsDialog').open&&document.querySelector('#tabMcp').classList.contains('active'))refreshMcpSessions();},10000);
+setInterval(()=>{if(!document.hidden&&document.querySelector('#settingsDialog').open&&document.querySelector('#tabMcp').classList.contains('active'))refreshDshSessions();},30000);
 
 let mcpPresetRendered=false;
 // Settings Dialog Tabs
@@ -3712,6 +3782,7 @@ document.querySelector('#settings').onclick = () => {
   const translateStatus = document.querySelector('#translateStatus');
   if (translateStatus) { translateStatus.textContent = ''; translateStatus.className = 'status-inline'; }
   dialog.showModal();
+  pollPixivLogin();
 };
 
 document.querySelector('#testSettings').onclick = async () => {
@@ -3721,7 +3792,7 @@ document.querySelector('#testSettings').onclick = async () => {
   if (!name || !key) { status.textContent = '✕ 请同时填写账户名称和 API Key'; status.className = 'status-inline status-error'; return; }
   status.textContent = '正在测试…'; status.className = 'status-inline';
   try {
-    const response = await fetch('/api/auth-test', { headers: { 'X-Danbooru-Username': name, 'X-Danbooru-Key': key } });
+    const response = await fetch('/api/auth-test', { method: 'POST', headers: {'Content-Type':'application/json'}, body:JSON.stringify({loginName:name,loginKey:key}) });
     const detail = await response.json().catch(() => ({}));
     status.textContent = detail.ok ? `✓ ${detail.message}` : `✕ ${detail.message || detail.error || `HTTP ${response.status}`}`;
     status.className = detail.ok ? 'status-inline status-success' : 'status-inline status-error';
@@ -3871,7 +3942,7 @@ document.querySelector('#refreshTags').onclick = () => loadPopularTags(true);
 
 function currentPreferences() {
   return {
-    mode, columns: columnCount(), ratings: station === 'dflow' ? [...dflowRatings] : [...dflowRatings],
+    mode, columns: forcedCols || 5, ratings: station === 'dflow' ? [...dflowRatings] : [...dflowRatings],
     pixivRating, pixivDates: readPixivDates(), search: manualSearchTags,
     selectedTags: [...selectedPopularTags]
   };
@@ -4017,7 +4088,7 @@ function syncRenderedFavoriteCards(items) {
 }
 
 async function pullSharedFavorites() {
-  if (sharedFavoritesPulling) return;
+  if (sharedFavoritesPulling || document.hidden) return;
   sharedFavoritesPulling = true;
   const revision = favoriteStateRevision;
   try {
@@ -4034,7 +4105,8 @@ async function pullSharedFavorites() {
       favoriteCache = remote.favorites;
       localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoriteCache));
       updateFavoriteCount();
-      document.querySelectorAll('[data-favorite-id]').forEach(button => updateFavoriteButtons(button.dataset.favoriteId));
+      const favoriteIds = new Set(favoriteCache.map(item => String(item.id)));
+      document.querySelectorAll('button[data-favorite-id]').forEach(button => updateFavoriteButton(button, favoriteIds.has(String(button.dataset.favoriteId))));
       if (mode === 'favorites') {
         if (favoriteGalleryNeedsRebuild(previous, favoriteCache)) refreshFavoriteGallery(true);
         else syncRenderedFavoriteCards(favoriteCache);
@@ -4084,6 +4156,8 @@ async function checkForUpdates() {
     const nowBtn = dialog.querySelector('#updateNow');
     if (nowBtn) { nowBtn.disabled = false; nowBtn.textContent = '一键拉取更新'; }
     dialog.querySelectorAll('.update-dialog-actions button').forEach(b => b.disabled = false);
+    dialog.querySelector('.update-notes-container').open = false;
+    dialog.querySelector('.update-notes-list').scrollTop = 0;
     dialog.showModal();
   } catch { /* GitHub unavailable should never interrupt browsing. */ }
 }
@@ -4153,15 +4227,25 @@ async function loadMetadataGallery() {
   } catch (error) { statusEl.textContent = `读取元数据失败：${error.message}`; }
   ended = true; sentinel.classList.remove('loading'); sentinel.classList.add('done');
 }
+const localGalleryEtags = new Map();
 async function loadWordedGallery(preserveScroll = false, renderId = ++galleryRenderRequest) {
   const requestId = ++wordedGalleryRequest;
   const requestedFolder = favoriteFolder;
+  const requestedView = viewKey();
   if (mode !== 'favorites' || !['worded','pending','completed'].includes(favoriteFolder)) return;
   const top = scrollY;
   try {
-    const res = await fetch('/api/worded/entries', {cache:'no-store'});
+    const revision = favoriteStateRevision;
+    const etag=preserveScroll && gallery.dataset.folder===requestedFolder && gallery.dataset.viewKey===requestedView ? localGalleryEtags.get(requestedFolder) : '';
+    const res = await fetch('/api/local-gallery', {cache:'no-store',headers:etag?{'If-None-Match':etag}:{}});
+    if(res.status===304) return;
     if (!res.ok) throw Error('HTTP ' + res.status);
-    const entries = await res.json();
+    const snapshot = await res.json();
+    const entries = snapshot.entries;
+    if (revision !== favoriteStateRevision) { refreshFavoriteGallery(true); return; }
+    favoriteCache = snapshot.favorites;
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoriteCache));
+    updateFavoriteCount();
     // Folder switches and refreshes can overlap.  A late response from the
     // previous folder must never paint its old card shape over the new view.
     if (requestId !== wordedGalleryRequest || renderId !== galleryRenderRequest || mode !== 'favorites' || favoriteFolder !== requestedFolder) return;
@@ -4173,39 +4257,48 @@ async function loadWordedGallery(preserveScroll = false, renderId = ++galleryRen
           ((displayQueueOrder(a.queueOrder) ?? Infinity) - (displayQueueOrder(b.queueOrder) ?? Infinity))
         : compareGalleryItems(a, b, requestedFolder));
     const visible = entries.filter(item => (item.folder || 'worded') === requestedFolder);
-    resetColumns(); currentPosts = posts.slice();
-    if (requestedFolder === 'worded' || requestedFolder === 'completed') {
-      const rows = [
-        ...posts.map(value => ({ kind: 'favorite', value })),
-        ...visible.map(value => ({ kind: 'entry', value }))
-      ];
-      rows.forEach((row, index) => row.index = index);
-      rows.sort((a, b) => compareGalleryItems(a.value, b.value, requestedFolder, a.index, b.index));
-      for (const row of rows) {
-        row.kind === 'favorite'
-          ? renderReverseCard(row.value, {kind: 'favorite', folder: requestedFolder})
-          : renderWordedCard(row.value);
+    localGalleryEtags.set(requestedFolder,res.headers.get('ETag') || '');
+    currentPosts = posts.slice();
+    const rows = [
+      ...posts.map(value => ({kind:'favorite', value})),
+      ...visible.map(value => ({kind:'worded', value}))
+    ];
+    rows.forEach((row,index) => { row.index = index; });
+    rows.sort(requestedFolder === 'pending' ? comparePendingRows :
+      (a,b) => compareGalleryItems(a.value,b.value,requestedFolder,a.index,b.index));
+    const reusable = state.ordered && gallery.dataset.folder === requestedFolder;
+    const previous = new Map(reusable ? [...gallery.children].map(card => [card.dataset.galleryKey,card]) : []);
+    if (!reusable) resetColumns();
+    gallery.dataset.folder = requestedFolder;
+    gallery.dataset.viewKey = requestedView;
+    const cards = [];
+    for (const row of rows) {
+      const key = `${row.kind}:${row.value.id}`;
+      const signature = JSON.stringify(row.value);
+      let card = previous.get(key);
+      if (!card || card._renderSignature !== signature) {
+        const options = {kind:row.kind, folder:requestedFolder, displayQueueOrder:displayQueueOrder(row.value.queueOrder)};
+        renderReverseCard(row.value,options);
+        const next = state.cards[state.cards.length - 1];
+        if (card) card.replaceWith(next);
+        card = next;
+        card.dataset.galleryKey = key;
+        card._renderSignature = signature;
       }
-    } else {
-      // Favorites and hand-written cards share one pending queue.  Render them
-      // from one sorted list as well; rendering the two collections separately
-      // lets stale queueOrder values leak into the circular number buttons and
-      // makes the visible order disagree with /api/reverse/queue.
-      const rows = [
-        ...posts.map(value => ({ kind: 'favorite', value })),
-        ...visible.map(value => ({ kind: 'worded', value }))
-      ];
-      rows.forEach((row, index) => { row.index = index; });
-      rows.sort(comparePendingRows);
-      let queuePosition = 0;
-      for (const row of rows) {
-        const options = { kind: row.kind, folder: 'pending' };
-        if (pendingQueueActive(row.value)) options.displayQueueOrder = ++queuePosition;
-        row.kind === 'favorite'
-          ? renderReverseCard(row.value, options)
-          : renderWordedCard(row.value, options);
-      }
+      cards.push(card);
+      previous.delete(key);
     }
+    for (const card of previous.values()) card.remove();
+    // Insert only out-of-order/new nodes. Unchanged cards retain focus, flip
+    // state, image decodes and hover state even during background sync.
+    let cursor = gallery.firstElementChild;
+    for (const card of cards) {
+      if (card === cursor) cursor = cursor.nextElementSibling;
+      else gallery.insertBefore(card,cursor);
+    }
+    state.cards = cards;
+    updateGalleryColumnSize();
+    scheduleCompactLayout();
     statusEl.textContent = folderName[requestedFolder] + ' ' + (posts.length + visible.length) + ' 张';
     const count = document.querySelector('#wordedCount');
     if (count) count.textContent = entries.filter(item => (item.folder || 'worded') === 'worded').length + readFavorites().filter(item => postFolder(item) === 'worded').length;
@@ -4261,7 +4354,7 @@ function renderMetadataCard(item, collection = 'metadata') {
   card.dataset.reverseId = String(item.id);
 
   const imageUrl = item.imageExt || item.source !== '手写'
-    ? `/api/${collection}/images/${encodeURIComponent(item.id)}`
+    ? thumbnailSrc(`/api/${collection}/images/${encodeURIComponent(item.id)}`)
     : '';
 
   const cardWrapper = document.createElement('div');
@@ -4470,7 +4563,7 @@ document.addEventListener('drop',event=>{
   showPromptDialog('',{kind:'create',imageFile:[...event.dataTransfer.files].find(f=>f.type.startsWith('image/'))});
 });
 setInterval(() => {
-  if (mode === 'metadata' && !document.activeElement?.matches('input,textarea') && !document.querySelector('#gallery .card-inner.flipped')) {
+  if (!document.hidden && mode === 'metadata' && !document.activeElement?.matches('input,textarea') && !document.querySelector('#gallery .card-inner.flipped')) {
     loadMetadataGallery();
   }
 }, 15000);
@@ -4479,3 +4572,87 @@ document.querySelector('#metadataFiles').onchange=async event=>{
   for(const file of files){try{const res=await fetch(`/api/metadata/images?name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'Content-Type':'image/png'},body:file});const body=await res.json();if(!res.ok)throw Error(body.error || `HTTP ${res.status}`);success++;}catch(e){toast(`${file.name}：${e.message}`)}}
   event.target.value='';if(success) {toast(`已导入 ${success} 张图片`);loadMetadataGallery();}
 };
+
+let wordedSyncBusy = false;
+setInterval(async () => {
+  if (document.hidden || wordedSyncBusy || mode !== 'favorites' || !['pending','worded','completed'].includes(favoriteFolder) ||
+      document.querySelector('.prompt-dialog')?.open || document.activeElement?.matches('input,textarea,select') ||
+      document.querySelector('#gallery .card-inner.flipped')) return;
+  wordedSyncBusy = true;
+  try { await loadWordedGallery(true, galleryRenderRequest); } finally { wordedSyncBusy = false; }
+}, 5000);
+// Official Pixiv login state lives on the server, not in a browser tab's memory.
+let pixivLoginTimer = null, pixivLoginPolling = false;
+async function pollPixivLogin() {
+  if(pixivLoginPolling)return;
+  pixivLoginPolling=true;
+  const status=document.querySelector('#pixivLoginStatus');
+  try {
+    const response=await fetch('/api/pixiv/login',{cache:'no-store',signal:AbortSignal.timeout(8000)});
+    if(!response.ok)throw Error(`HTTP ${response.status}`);
+    const result=await response.json();
+    status.textContent=result.message || '';
+    status.className='status-inline'+(result.status==='connected'?' status-success':['error','expired'].includes(result.status)?' status-error':'');
+    const waiting=['starting','waiting'].includes(result.status);
+    document.querySelector('#pixivOfficialLogin').disabled=waiting;
+    document.querySelector('#cancelPixivLogin').hidden=!waiting;
+    if(result.status==='connected') {
+      const account=await (await fetch('/api/state',{cache:'no-store'})).json();
+      localStorage.pixivCookie=account.account.pixivCookie || '';
+      document.querySelector('#pixivCookie').value=localStorage.pixivCookie;
+      clearTimeout(pixivLoginTimer);
+    } else if(waiting) {
+      clearTimeout(pixivLoginTimer);pixivLoginTimer=setTimeout(pollPixivLogin,2000);
+    }
+  } catch(error){status.textContent=`登录状态读取失败：${error.message}`;document.querySelector('#pixivOfficialLogin').disabled=false;}
+  finally {pixivLoginPolling=false;}
+}
+document.querySelector('#pixivOfficialLogin').onclick=async()=>{
+  const button=document.querySelector('#pixivOfficialLogin'),status=document.querySelector('#pixivLoginStatus');
+  button.disabled=true;status.textContent='正在打开官方登录…';
+  try {
+    const response=await fetch('/api/pixiv/login',{method:'POST',signal:AbortSignal.timeout(25000)});
+    const result=await response.json();if(!response.ok)throw Error(result.error || `HTTP ${response.status}`);
+    await pollPixivLogin();
+  } catch(error){status.textContent=error.message;status.className='status-inline status-error';button.disabled=false;}
+};
+document.querySelector('#cancelPixivLogin').onclick=async()=>{
+  clearTimeout(pixivLoginTimer);
+  await fetch('/api/pixiv/login',{method:'DELETE'}).catch(()=>{});
+  await pollPixivLogin();
+};
+
+let reverseBatchTimer = null, reverseBatchPolling = false;
+async function pollReverseBatch() {
+  const id=localStorage.getItem('dflowReverseBatchId');if(!id || reverseBatchPolling || document.hidden)return;
+  reverseBatchPolling=true;
+  const status=document.querySelector('#reverseBatchStatus');
+  try {
+    const response=await fetch(`/api/reverse/batch/${encodeURIComponent(id)}`,{cache:'no-store',signal:AbortSignal.timeout(8000)});
+    if(response.status===404){localStorage.removeItem('dflowReverseBatchId');return;}
+    if(!response.ok)throw Error(`HTTP ${response.status}`);
+    const run=await response.json();
+    status.textContent=`成功 ${run.completed}/${run.total}${run.failed?` · 失败 ${run.failed}`:''}${run.processing?' · 反推中':run.queued?' · 等待 Agent 领取':' · 已结束'}`;
+    status.title=run.errors.map(item=>`${item.id}: ${item.error}`).join('\n');
+    if(run.dispatch?.status==='failed') {status.textContent=`唤起失败：${run.dispatch.error}`;return;}
+    if(run.queued || run.processing) {clearTimeout(reverseBatchTimer);reverseBatchTimer=setTimeout(pollReverseBatch,3000);}
+  }catch(error){status.textContent=`进度读取失败：${error.message}`;clearTimeout(reverseBatchTimer);reverseBatchTimer=setTimeout(pollReverseBatch,10000);}
+  finally{reverseBatchPolling=false;}
+}
+document.querySelector('#startReverseBatch').onclick=async()=>{
+  const button=document.querySelector('#startReverseBatch'),status=document.querySelector('#reverseBatchStatus');
+  if(button.disabled)return;
+  button.disabled=true;status.textContent='正在唤起已连接的 Agent…';
+  try {
+    const response=await fetch('/api/reverse/batch/start',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({instruction:document.querySelector('#reverseBatchInstruction').value}),signal:AbortSignal.timeout(30000)});
+    const run=await response.json();if(!response.ok)throw Error(run.error || `HTTP ${response.status}`);
+    localStorage.setItem('dflowReverseBatchId',run.batchId);
+    toast(`${run.reused?'继续现有批次':'已唤起 Agent'}：${run.total} 张`);
+    await pollReverseBatch();
+    if(mode==='favorites' && favoriteFolder==='pending')await loadWordedGallery(true,galleryRenderRequest);
+  }catch(error){status.textContent=error.message;status.title=error.message;toast(`启动失败：${error.message}`);}
+  finally{button.disabled=false;}
+};
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)pollReverseBatch();});
+pollReverseBatch();

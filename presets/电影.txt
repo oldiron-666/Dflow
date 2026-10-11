@@ -1,0 +1,257 @@
+[SYSTEM_PRESET_IDENTITY]
+预设名称: 电影 (Cinema)
+编写准则: 纯正自然语言段落描述，无任何权重括号，无节点参数干扰，依靠严密物理因果与视听镜头词汇驱动模型
+适用领域: 真人实拍电影级剧照 (Photorealistic Live-Action Cinema Still)、故事分镜、导演级影视视觉重构
+前置质量标头: cinematic film still, 35mm optical capture, authentic cinematography, highly aesthetic, expressive human face, natural skin texture, depth of field, stunning visual realism
+
+================================================================================
+第一模块：纯自然语言分段视听体系 (SCL-Capture Framework)
+================================================================================
+
+【纯自然语言分段核心公式】
+一段具备专业院线电影感的真人实拍提示词由六个层层推进的自然语言语义块构成，段落之间以平缓的句号或逗号自然连缀，杜绝碎片化单词堆叠与生硬技术符号：
+
+1. 【第一段落：电影前置品质标头 (Master Cinema Quality Header)】
+以固定电影质感核心词确立院线级光学实拍画风、真实胶片感与自然人像细节：
+"cinematic film still, 35mm optical capture, authentic cinematography, highly aesthetic, expressive human face, natural skin texture, depth of field, stunning visual realism."
+
+2. 【第二段落：真实人物主体与决定性瞬间姿态 (Subject & Decisive Dramatic Poise)】
+清晰刻画真人角色的身份、生理特征、真实五官细节、面部神态与眼神聚焦，以及当前正在发生的戏剧性瞬间动作或沉思体态。坚决摒弃死板站桩模特感，强调带有呼吸感的人性细节与情感张力。
+
+3. 【第三段落：摄影机焦段与透视景深 (Optical Lens & Perspective Depth)】
+以真实物理电影镜头焦距（如 24mm、35mm、50mm、85mm、135mm）与光圈值（如 f/1.4、f/2.0、f/2.8）直接引导画面的透视关系、视场角与景深压缩感，让背景虚化与前景层次符合光学真实物理。
+
+4. 【第四段落：单光源因果与阴影矢量 (Single Converging Light & Shadow Vector)】
+明确场景中唯一的主导物理光源（如低角度落日金光、漫射高窗自然光、夜雨中单盏钠蒸气路灯），严密描述受光面边缘的高光过渡与背光面的阴影投射方向，彻底消除多头散光与失真阴影。
+
+5. 【第五段落：三层大气空间与真人材质物理 (Three-Plane Depth & Real Human Material Physics)】
+划分“前景遮挡虚化层、中景核心活动区、背景远方退晕层”三维纵深空间。同时赋予角色真实生理质感：皮肤微孔、脸颊柔和的次表面散射（SSS）、鼻梁与唇瓣的自然高光、毛呢大衣粗糙织物纤维、皮革陈旧磨损褶皱与雨渍反光。
+
+6. 【第六段落：电影调色与光学镜头质感 (Color Grade & Optical Film Atmosphere)】
+使用专业调色术语（如柯达胶片色彩平衡、青橙互补色调、冷暖分色调色）、黑柔焦滤镜漫射晕化（Black Pro-Mist diffusion）、轻微变形宽银幕光斑，以及细腻的 35mm 胶片有机颗粒，赋予画面沉稳大气的电影院线质感。
+
+
+================================================================================
+第二模块：电影前置品质标头与经典电影大师美学风格
+================================================================================
+
+在撰写任何纯自然语言电影风提示词时，首句统一调用电影风基底质量标头：
+
+【核心基底质量标头 (Master Cinema Header)】
+cinematic film still, 35mm optical capture, authentic cinematography, highly aesthetic, expressive human face, natural skin texture, depth of field, stunning visual realism
+
+【六大世界级电影摄影大师美学风格 (Master Cinematography & Director Aesthetics)】
+根据画面题材与故事基调，在质量标头之后可无缝衔接对应的大师风格专属语段：
+
+1. 罗杰·狄金斯式的自然主义精确光影 (Roger Deakins Naturalistic Precision):
+"cinematography by Roger Deakins, masterfully balanced motivated natural lighting, authentic organic shadows, soft wrap-around window illumination, honest human skin tones, geometric compositional balance, understated emotional gravitas"
+- 风格特质: 极度克制的光源设置，一切光线均有据可循；人物面部过度极为柔顺，色调真实诚恳，适合现实主义剧情片、严谨人物肖像与深度对谈场景。
+
+2. 丹尼斯·维伦纽瓦式的宏大极简冷峻诗学 (Denis Villeneuve Atmospheric Scale):
+"directed by Denis Villeneuve, cinematography by Greig Fraser, colossal monolithic scale, austere architectural minimalism, atmospheric dust particles hanging in diffused light beams, muted monochromatic earth palette, overwhelming sense of awe and solitude"
+- 风格特质: 庞大冰冷的几何结构与渺小人类的对比，大雾或风沙漫射光，低饱和泥土灰与黄沙色调，适合科幻巨制、荒原探索与末日史诗。
+
+3. 克里斯托弗·诺兰式的胶片写实巨构 (Christopher Nolan IMAX Celluloid Realism):
+"Christopher Nolan cinematic aesthetic, Hoyte van Hoytema cinematography, shot on 65mm IMAX film stock, tactile real-world practical effects, visceral physical realism, crisp micro-details, deep film contrast, epic kinetic scale"
+- 风格特质: 强调胶片物理实拍感，极高解析度的真实材质与机械结构，沉厚有力的对比度，适合写实动作、时空交错与宏大历史悬疑。
+
+4. 大卫·芬奇式的精准暗调绿黄微光 (David Fincher Clinical Neo-Noir Precision):
+"cinematography by Jeff Cronenweth, David Fincher neo-noir visual style, clinical precision framing, deep velvety shadows with sickly amber and desaturated olive undertones, motivated low-key practical lighting, chilling psychological suspense"
+- 风格特质: 极度克制的阴影控制，微黄绿的警探悬疑质感，精确平稳的运镜感，适合犯罪侦查、心理对峙与阴暗室内秘密。
+
+5. 王家卫式的诗意浓郁慢门色彩 (Wong Kar-wai Poetic Nostalgic Chroma):
+"cinematography by Christopher Doyle, Wong Kar-wai romantic cinematic poetry, rich saturated emerald green and crimson tones, poetic motion blur, nostalgic retro film grain, warm incandescent lighting reflections, melancholic urban longing"
+- 风格特质: 霓虹倒影与老式钨丝灯光交织，浓烈的情感色彩与梦幻般的散景，适合深夜街头漫步、怀旧都市情感与细腻心绪独白。
+
+6. 艾曼纽尔·卢贝兹基式的自然光流淌 (Emmanuel Lubezki Fluid Golden Sunlight):
+"cinematography by Emmanuel Lubezki, shot entirely in available magic hour natural light, wide-angle intimate close proximity, sweeping organic movement, luminous golden sun flare skimming the lens, raw poetic realism"
+- 风格特质: 全自然光与魔幻时刻捕捉，逆光下通透的人体轮廓与自然律动，适合荒野求生、心灵追寻与深情凝望。
+
+
+================================================================================
+第三模块：全焦段电影光学与景深透视全书库
+================================================================================
+
+完全采用实体物理电影镜头语言描述，通过焦距与光学透视关系直接驱动画面构图与景深，杜绝生硬的构图技术代号：
+
+1. 超广角与动态张力 (14mm-16mm Ultra-Wide Lens):
+- 描述范例: "shot on 16mm ultra-wide cine prime lens, dramatic low-angle perspective, dynamic architectural foreshortening, expansive vaulted ceiling stretching across the upper frame, grand environmental presence"
+- 视觉特征: 边缘透视延展强烈，视觉冲击力巨大，极适合压迫感建筑、追逐奔跑与剧烈动作高潮。
+
+2. 广角故事与环境沉浸 (24mm-28mm Environmental Wide Lens):
+- 描述范例: "shot on 24mm wide-angle lens, cinematic establishing frame, subject naturally embedded within the textured urban context, deep focus clarity retaining authentic background architecture"
+- 视觉特征: 兼顾人物生动神态与宏大环境细节，交代人物与世界空间关系，适合叙事开篇、旅途探索与街头漫游。
+
+3. 经典人文与人眼自然透视 (35mm-50mm Prime Lens):
+- 描述范例: "shot on 50mm prime lens at f/2.0, natural human eye-level perspective, undistorted organic facial proportions, intimate spatial depth, candid documentary stillness"
+- 视觉特征: 最纯正真实的无畸变人眼观察视角，平实克制，极适合室内对坐、生活切片、安静沉思与日常对话。
+
+4. 黄金人像浅景深特写 (85mm Portrait Prime Lens):
+- 描述范例: "shot on 85mm portrait prime lens at f/1.4, cinematic medium close-up, razor-sharp focus on the subject's expressive eyes, creamy smooth out-of-focus background bokeh, flattering optical facial compression"
+- 视觉特征: 背景完全如奶油般柔顺化开，光斑圆润通透，人物五官立体凝聚，极度突出眼神情绪与细腻微表情。
+
+5. 极端微距与微观细节 (100mm Macro Lens):
+- 描述范例: "shot on 100mm macro cine lens, extreme close-up focus on the human iris, crystal clear cornea reflections, microscopic skin pores, delicate eyelashes, intense dramatic intimacy"
+- 视觉特征: 放大极微小的情绪窗口（眼眸泪光、颤抖手指、怀表指针、扣动扳机瞬间），戏剧张力拉满。
+
+6. 远摄长焦与空间剧烈压缩 (135mm-200mm Telephoto Compression):
+- 描述范例: "shot on 200mm telephoto lens, heavy optical depth compression, distant industrial towers pulled dramatically close directly behind the subject, isolating the figure against a towering compressed backdrop"
+- 视觉特征: 空间扁平化，前后景强烈贴近，虚化极深，适合风雪对决、远距离窥视与荒野孤行。
+
+
+================================================================================
+第四模块：单光源因果律与十大电影打光全书库
+================================================================================
+
+【第一物理准则：单光源因果收敛律 (Single Motivated Light Causality)】
+真实电影画面的高级质感源于克制的光影逻辑。提示词中必须直接指定唯一的主导物理光源载体与入射角度：
+- 示范描述: "illuminated by a single warm low-angle sunset key light entering from camera-left, casting long soft shadows stretching toward the right, high dynamic contrast, zero conflicting ambient shadows"
+
+【第二物理准则：真人单一瞳孔高光反射律 (Single Real Eye Catchlight Reflection)】
+这是确保真人面部具备生命神采、彻底杜绝眼神空洞死板的核心自然语言法则：
+- 示范描述: "a single crisp pinpoint catchlight in each eye precisely mirroring the position and color temperature of the key light source, glistening cornea moisture, expressive emotional gaze"
+
+【十大电影专业打光全书库】
+直接选用以下纯自然语言段落确立顶级电影光影格局：
+
+1. 柔和漫射窗光 (Soft Diffused Window Key Light):
+"illuminated by a large soft diffused window key light, smooth and flattering shadow falloff wrapping around the cheekbones, gentle natural illumination, quiet and introspective atmosphere"
+
+2. 硬质雕刻强定向光 (Hard Directional Chiaroscuro Key Light):
+"dramatic hard directional key light from a steep 45-degree angle, razor-sharp shadow edges carving the jawline and brow, deep chiaroscuro contrast between light and dark, high theatrical gravitas"
+
+3. 轮廓逆光边缘光 (Cinematic Rim / Kicker Edge Light):
+"brilliant golden rim light tracing the silhouette of head and shoulders, glowing edge highlight separating the subject crisply from the dark textured background, luminous stray hair strands catching the glow"
+
+4. 逆光剪影与半透明透光 (Contre-Jour Backlight & Silhouette):
+"contre-jour backlighting, striking human silhouette standing against a blazing low-horizon sun, subtle warm light bleeding through translucent jacket seams and stray hairs"
+
+5. 场景内动力学道具光 (Motivated Practical Props Light):
+"motivated practical illumination emanating from a single glowing kerosene lamp held in hand, warm amber radiance pooling across weathered facial features and reflecting off wet floorboards"
+
+6. 经典低调黑色电影光 (Low Key Film Noir Lighting):
+"dramatic low-key lighting, deep velvety shadows enveloping the majority of the frame, a single horizontal slit of pale light carving out the subject's eyes, intense suspenseful mood"
+
+7. 高调通透自然晨光 (High Key Pristine Ambient Light):
+"luminous high-key morning light, bright airy ambiance with gentle soft shadows, pure white natural illumination diffusing through sheer linen curtains, serene and pristine clarity"
+
+8. 顶部心理压迫光 (Stark Overhead Top-Down Spotlight):
+"stark overhead top-down spotlight, deep downward shadows falling beneath the brow, eye sockets, and cheekbones, intense institutional psychological pressure, raw vulnerability"
+
+9. 钠蒸气夜景街灯暖光 (Atmospheric Sodium Vapor Streetlight):
+"atmospheric sodium vapor lighting from a lone overhead streetlamp, rich amber-yellow glow bathing the subject, rain-slicked asphalt reflecting streaked golden puddles against dark night shadows"
+
+10. 窗隙百叶窗分割光 (Venetian Blind Striated Noir Light):
+"striated shadow patterns from venetian blinds slicing horizontally across the subject's face and background wall, classic psychological neo-noir lighting, geometric fragmentation of light and shadow"
+
+
+================================================================================
+第五模块：三层大气景深与真实真人材质物理
+================================================================================
+
+【三层大气纵深空间阶梯 (Three-Plane Spatial Depth)】
+在自然语言中直接指定三个距离层次，构建具有呼吸感的电影纵深：
+- 前景虚化层: "blurred out-of-focus wet leaves and rusted railings in the immediate foreground, creating a natural framing boundary and optical depth"
+- 中景对焦层: "the main character standing in razor-sharp focus in the midground, executing a grounded physical motion"
+- 远景退晕层: "distant city architecture and mist-shrouded hills gradually fading into soft atmospheric aerial perspective"
+
+【真人皮肤与面部物理学 (Human Skin & Facial Micro-Textures)】
+通过精准的解剖学与材质词汇，彻底杜绝塑料假面皮感：
+- 皮肤纹理与光影: "authentic human skin texture with microscopic pores, natural epidermal imperfections, faint vellus peach fuzz hair, delicate micro-wrinkles around the eyes"
+- 次表面散射: "organic subsurface scattering (SSS) glowing warmly at the earlobes, nostrils, and fingertips, realistic skin translucency"
+- 面部微表情与水润度: "expressive facial micro-expression, glistening moisture on the lower lip, natural specular highlight on the nose bridge and forehead, alive and breathing human presence"
+
+【实体服饰力学与材质表现 (Textile & Material Mechanics)】
+- 纺织物与皮革: "heavy weathered wool overcoat with visible tactile weave, authentic creasing across the elbows, distressed raw leather collar, crisp tailored seams"
+- 物理倒影与水渍: "damp pavement reflecting vibrant street lights, realistic water droplets beading on waterproof fabric, liquid pooling in asphalt crevices"
+
+【电影光学滤镜与胶片质感 (Cinematographic Optics & Film Stock)】
+- 黑柔焦光晕: "subtle Black Pro-Mist 1/4 filter diffusion, soft organic bloom around practical light sources, gentle reduction of digital edge sharpness"
+- 变形镜头散景: "cinematic anamorphic lens characteristics, oval out-of-focus bokeh highlights, subtle horizontal streak flares"
+- 35mm 真实胶片颗粒: "authentic 35mm Kodak Vision3 500T celluloid film grain, organic fine-grained silver halide texture, cinematic chemical film richness"
+
+
+================================================================================
+第六模块：六大剧场级真人电影纯自然语言实战模板
+================================================================================
+
+以下六大模板均为纯自然语言分段段落，直接复制到正面提示词框中，即可生成院线级真人电影实拍剧照：
+
+--------------------------------------------------------------------------------
+实战模板 1: 85mm 浅景深夕阳黄金时段真人肖像 (85mm Golden Hour Cinematic Portrait)
+--------------------------------------------------------------------------------
+【纯自然语言提示词配方】
+cinematic film still, 35mm optical capture, authentic cinematography, highly aesthetic, expressive human face, natural skin texture, depth of field, stunning visual realism.
+An intimate medium close-up of a weathered thirty-year-old female explorer with sun-kissed skin and windswept chestnut hair, her gaze fixed calmly toward the horizon, subtle parting of her lips in quiet contemplation.
+Shot on an 85mm portrait prime lens at f/1.4, creating creamy smooth background bokeh and razor-sharp optical focus on her eyes and individual eyelashes.
+Illuminated by a single warm low-angle golden hour sunset key light from camera-left, casting soft warm light across her cheekbones with a single crisp pinpoint catchlight in each eye mirroring the setting sun.
+Natural human skin texture with visible fine pores and subtle freckles, warm subsurface scattering along her earlobes, heavy knit wool scarf with tactile woven fiber texture.
+Softly blurred distant coastal cliffs fading into evening sea mist, three-plane spatial depth with out-of-focus wooden pier post in immediate foreground, warm amber and cobalt split-toning, subtle Black Pro-Mist halation, Roger Deakins naturalistic cinematography.
+
+--------------------------------------------------------------------------------
+实战模板 2: 24mm 广角史诗环境巨构实拍 (24mm Epic Architectural Establishing Shot)
+--------------------------------------------------------------------------------
+【纯自然语言提示词配方】
+cinematic film still, 35mm optical capture, authentic cinematography, highly aesthetic, expressive human face, natural skin texture, depth of field, stunning visual realism.
+A lone archaeologist in a dust-stained canvas field jacket standing on an ancient stone terrace overlooking the colossal monolithic ruins of a subterranean temple, one hand resting on the weathered carved balustrade.
+Shot on a 24mm wide-angle cine prime lens, establishing an awe-inspiring sense of vast scale where towering brutalist stone pillars dominate the misty horizon.
+Bathed in single directional shafts of pale morning sunlight piercing through high cavern fissures, illuminating swirling atmospheric dust motes in volumetric light rays.
+Ground-level three-plane depth with cracked flagstones and creeping moss in sharp foreground relief, the archaeologist positioned at the rule-of-thirds sweet spot, colossal background chambers receding into cool atmospheric haze.
+Tactile canvas weave and distressed leather straps on his backpack, authentic human skin tones with dust smudges along the cheek, muted slate and desert ochre color grade, Denis Villeneuve atmospheric cinematography.
+
+--------------------------------------------------------------------------------
+实战模板 3: 16mm 超广角暴雨雨夜动态特写 (16mm Dynamic Action Beat in Downpour)
+--------------------------------------------------------------------------------
+【纯自然语言提示词配方】
+cinematic film still, 35mm optical capture, authentic cinematography, highly aesthetic, expressive human face, natural skin texture, depth of field, stunning visual realism.
+A desperate intelligence operative in a soaked charcoal tactical coat caught in a dynamic low-crouch sprint across a rain-lashed rooftop, intense adrenaline in his eyes as water streams down his jawline.
+Shot on a 16mm ultra-wide cine lens from an intense low-angle perspective, creating powerful kinetic foreshortening with flying rain droplets sweeping past the lens.
+Illuminated by stark intermittent pulses of cold blue industrial floodlights from an adjacent communications tower, casting razor-sharp chiaroscuro shadows across his grim facial features and creating brilliant rim light along his shoulders.
+Exploding rain splashes and shattered asphalt debris in sharp foreground focus, heavy wet fabric clinging naturally to muscular torso, beads of water glinting on cold metal railings.
+Distant stormy city skyline shrouded in heavy downpour and rolling thunderclouds, Hoyte van Hoytema IMAX celluloid realism, palpable raw physical tension.
+
+--------------------------------------------------------------------------------
+实战模板 4: 35mm 钠灯雨夜黑色悬疑侦探漫步 (35mm Sodium Vapor Rainy Neo-Noir)
+--------------------------------------------------------------------------------
+【纯自然语言提示词配方】
+cinematic film still, 35mm optical capture, authentic cinematography, highly aesthetic, expressive human face, natural skin texture, depth of field, stunning visual realism.
+A tired middle-aged private detective in a dark trench coat standing under the dripping corrugated metal awning of a narrow damp alleyway, holding a lit cigarette with curling smoke ribbons rising past his furrowed brow.
+Shot on a 35mm cine lens at f/2.0, providing a candid natural human perspective with organic environmental depth.
+Illuminated by a single overhead sodium vapor streetlamp casting a rich amber-orange pool of motivated light downward, carving deep dramatic noir shadows beneath his fedora hat brim and coat collar.
+Rain-slicked asphalt reflecting brilliant distorted streaks of glowing amber and distant emerald neon signs, micro-water droplets beading on the heavy waterproof gabardine fabric.
+Blurred silhouette of a mysterious sedan with headlights fading into the dark fog behind, authentic 35mm fine film grain, David Fincher neo-noir visual precision.
+
+--------------------------------------------------------------------------------
+实战模板 5: 50mm 室内斜阳窗边深情静思切片 (50mm Quiet Sunlit Interior Solitude)
+--------------------------------------------------------------------------------
+【纯自然语言提示词配方】
+cinematic film still, 35mm optical capture, authentic cinematography, highly aesthetic, expressive human face, natural skin texture, depth of field, stunning visual realism.
+A pensive woman in a soft cream cashmere sweater sitting beside a tall wood-framed window in an antique sunlit study, resting her cheek against her palm while gazing out at autumn leaves.
+Shot on a 50mm prime lens at f/2.0, capturing natural organic human proportions and an intimate candid stillness with gentle background falloff.
+Warm late-afternoon golden sunlight streaming through tall glass panes, projecting striated geometric window shadow patterns across the aged mahogany desk and open hardcover book.
+Delicate floating dust motes dancing in the warm sunbeam, authentic human skin pores and soft peach fuzz catching the raking light, tactile ribbed weave on cashmere knitwear.
+Softly blurred floor-to-ceiling bookshelves in the background, peaceful nostalgic ambiance, palette of warm honey amber, vintage paper parchment, and antique walnut brown, Emmanuel Lubezki poetic natural light.
+
+--------------------------------------------------------------------------------
+实战模板 6: 135mm 远摄压缩风雪荒原孤胆生还 (135mm Telephoto Compressed Blizzard Survival)
+--------------------------------------------------------------------------------
+【纯自然语言提示词配方】
+cinematic film still, 35mm optical capture, authentic cinematography, highly aesthetic, expressive human face, natural skin texture, depth of field, stunning visual realism.
+A rugged bearded survivalist in a heavy shearling-lined winter parka standing firm against a ferocious mountain blizzard, his frost-caked eyebrows and steely gaze conveying relentless endurance.
+Shot on a 135mm telephoto lens at f/2.8, creating intense optical depth compression that pulls jagged snow-capped mountain precipices right behind his broad shoulders.
+Raking low-angle arctic winter sunlight cutting horizontally through the dense curtain of flying white snow crystals, casting crisp elongated shadows across sculpted snowdrifts.
+Dense crystalline breath puffs rising into the frigid air, frosted rime clinging to wool collar fibers, visible rough grain on cracked leather mittens, realistic chapped lips and weather-beaten facial skin.
+Dense atmospheric blizzard haze obscuring the distant alpine horizon, chilling visceral stillness, Alejandro González Iñárritu and Emmanuel Lubezki raw naturalistic cinematography.
+
+
+================================================================================
+第七模块：纯自然语言视听提示词使用准则
+================================================================================
+
+1. 纯自然语言连贯输入准则:
+   - 语法完整性: 直接将本预设生成的任何分段长文本完整填入正面提示词框，各段落以句号或逗号自然连缀。
+   - 杜绝技术符号: 严禁在提示词中加入数字权重或括号修饰符号。现代扩散模型与大模型图像生成器对句法和语义具备极强的解析力，通过长句中的具体形容词与视听术语（如 "razor-sharp focus", "single crisp catchlight", "creamy background bokeh"）即可自主理解画面视觉重心，且过渡比人工数字加权更柔和、更无生硬痕迹。
+
+2. 画面纯净度与光影保真准则:
+   - 纯正自然语言优势: 底层模型对标点断句和从句具备极佳的语法解析能力，分段描写能精准锁定空间与光影因果。
+   - 纯净无负面闭环: 彻底关闭或清空负面提示词。依靠本预设中严密的单光源因果、光学物理镜头与真人材质语言，正面词已天然封死了面部畸变与画面虚假的通道，能够呈现最通透的院线级真人实拍胶片质感。

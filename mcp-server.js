@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { imageSize } from 'image-size';
@@ -9,18 +10,25 @@ import { DEFAULT_REVERSE } from './reverse-workflow.js';
 const port = Number(process.env.DFLOW_PORT || 4173);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error('DFLOW_PORT 无效');
 const base = `http://127.0.0.1:${port}`;
-const server = new McpServer({ name: 'dflow-local', version: '0.2.0' });
+const {version: appVersion} = JSON.parse(await fs.readFile(new URL('./package.json', import.meta.url), 'utf8'));
+const server = new McpServer({ name: 'dflow-local', version: appVersion });
 const text = value => ({ content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] });
 const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
 let sessionId = null;
+const clientId = crypto.randomUUID();
+let registering = null, revoked = false, initialized = false;
 const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
-async function api(route, options = {}) {
+async function api(route, options = {}, retried = false) {
   let response;
   const headers = new Headers(options.headers || {});
   if (sessionId) headers.set('X-DFlow-MCP-Session', sessionId);
   try { response = await fetch(base + route, { ...options, headers, signal: AbortSignal.timeout(30000) }); }
   catch (error) { throw Error(`无法连接本机 DFlow (${base})：请先启动 npm start。${error.message}`); }
+  if (response.status === 401 && route === '/api/reverse/direct/claim' && !retried) {
+    await registerSession(true);
+    return api(route, options, true);
+  }
   if (!response.ok) {
     const body = await response.text();
     let message = body.slice(0, 400);
@@ -35,7 +43,7 @@ async function json(route, method = 'GET', body) {
 }
 function tool(name, description, inputSchema, action) {
   server.registerTool(name, { description, inputSchema }, async args => {
-    try { return await action(args); }
+    try { await registerSession(true); return await action(args); }
     catch (error) { return { isError: true, content: [{ type: 'text', text: error.message || String(error) }] }; }
   });
 }
@@ -94,21 +102,21 @@ tool('read_pending_image', '读取待反推区某张已缓存的高清图，返�
   if (!Object.values(mime).includes(type) || bytes.length < 24) throw Error('缓存响应不是有效的图片');
   return { content: [{ type: 'text', text: JSON.stringify({ id, preset: item.preset, reversePreset:item.reversePreset, customInstruction: item.customInstruction, queueOrder: item.queueOrder }) }, { type: 'image', data: bytes.toString('base64'), mimeType: type }] };
 });
-async function claimDirectReverse(requestId = '') {
-  const result = await json('/api/reverse/direct/claim', 'POST', requestId ? { requestId } : {});
+async function claimDirectReverse(requestId = '', batchId = '') {
+  const result = await json('/api/reverse/direct/claim', 'POST', { requestId, batchId });
   // DSH can deliver a retained wake-up message after DFlow was restarted.
   // The server normally performs this fallback itself; keep one client-side
   // retry as well for older servers and transient queue races.
-  if (!result.request && requestId && result.requestIdMissing) {
+  if (!result.request && requestId && result.requestIdMissing && !batchId) {
     const fallback = await json('/api/reverse/direct/claim', 'POST', {});
     if (!fallback.request) return fallback;
     return { ...fallback, fallbackFromRequestId: requestId, workflow: await workflow(fallback.item) };
   }
   if (!result.request) return result;
-  return { ...result, workflow: await workflow(result.item) };
+  return { ...result, workflow: {...await workflow(result.item), batchInstruction:result.request.batchInstruction || ''} };
 }
-tool('claim_direct_reverse', '从平板发起的“AI直推”请求中领取一张图片，并返回完整的先反推后扩写流程。完成后必须调用 complete_pending，失败必须调用 fail_pending；聊天只报告开始、成功或失败原因，不输出完整提示词正文。', { requestId: z.string().optional() }, async ({ requestId = '' }) => {
-  try { return text(await claimDirectReverse(requestId)); }
+tool('claim_direct_reverse', '从平板发起的“AI直推”请求中领取一张图片，并返回完整的先反推后扩写流程。完成后必须调用 complete_pending，失败必须调用 fail_pending；聊天只报告开始、成功或失败原因，不输出完整提示词正文。', { requestId: z.string().optional(), batchId:z.string().optional() }, async ({ requestId = '', batchId = '' }) => {
+  try { return text(await claimDirectReverse(requestId,batchId)); }
   catch (error) { return { isError: true, content: [{ type: 'text', text: error.message || String(error) }] }; }
 });
 tool('claim_next_pending', '优先领取平板发起的 AI 直推请求；没有直推请求时再领取普通待反推队列。返回反推与扩写两阶段完整预设正文。领取后读图，必须 complete_pending 或 fail_pending。', {}, async () => {
@@ -156,30 +164,46 @@ tool('import_metadata_png', '导入本地原始 ComfyUI PNG 至元数据库，�
 // Stdio is one client per process. Register before connect: the SDK emits
 // `initialized` during connect, so assigning this callback afterwards loses it.
 async function registerSession(force = false) {
+  if (revoked) throw Error('MCP 会话已被用户断开，请在客户端重新连接');
+  if (registering) return registering;
   if (sessionId && !force) return;
-  // A DFlow server restart invalidates the old in-memory session. Clear it
-  // before calling json(), otherwise the registration request would carry the
-  // stale X-DFlow-MCP-Session header and never recover.
-  sessionId = null;
-  try {
-    const client=server.server.getClientVersion();
-    const result=await json('/api/mcp/sessions','POST',{name:client?.name || process.env.DFLOW_AGENT_NAME || '未知 Agent',version:client?.version || ''});
+  registering = (async () => {
+    const client = server.server.getClientVersion();
+    const response = await fetch(base+'/api/mcp/sessions', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({clientId,name:process.env.DFLOW_AGENT_NAME || client?.name || '未知 Agent',version:client?.version || ''}),
+      signal:AbortSignal.timeout(5000)
+    });
+    const result=await response.json();
+    if(response.status===410 && result.reason==='revoked') revoked=true;
+    if(!response.ok) throw Error(result.error || `登记失败 HTTP ${response.status}`);
     sessionId=result.id;
-  } catch (error) { console.error('DFlow MCP 连接状态登记失败:', error.message); }
+  })().finally(()=>{registering=null;});
+  return registering;
 }
-server.server.oninitialized = registerSession;
+server.server.oninitialized = () => {
+  initialized=true;
+  registerSession().catch(error=>console.error('DFlow MCP 连接状态登记失败:',error.message));
+};
 await server.connect(new StdioServerTransport());
-const heartbeat=setInterval(async()=>{
-  if (!sessionId) { await registerSession(true); return; }
-  try {
-    const response=await fetch(base+`/api/mcp/sessions/${encodeURIComponent(sessionId)}/heartbeat`, {method:'POST',headers:{'X-DFlow-MCP-Session':sessionId},signal:AbortSignal.timeout(5000)});
-    if (response.status === 410 || !response.ok) {
-      await registerSession(true);
-    }
-  } catch {
-    // DFlow may be restarting. Drop the stale ID so the next heartbeat can
-    // register a fresh session as soon as the local server is back.
-    sessionId = null;
+// Sequential heartbeats never overlap registration or resurrect a revoked
+// session. Tools also register, so idle/late initialization cannot hide a client.
+async function heartbeat() {
+  if(initialized && !revoked) {
+    try {
+      if(!sessionId) await registerSession();
+      else {
+        const response=await fetch(base+`/api/mcp/sessions/${encodeURIComponent(sessionId)}/heartbeat`,{
+          method:'POST',signal:AbortSignal.timeout(5000)
+        });
+        if(response.status===410) {
+          const result=await response.json();
+          if(result.reason==='revoked') revoked=true;
+          else {sessionId=null;await registerSession();}
+        } else if(!response.ok) sessionId=null;
+      }
+    } catch {sessionId=null;}
   }
-}, 5000);
-heartbeat.unref();
+  setTimeout(heartbeat,5000).unref();
+}
+setTimeout(heartbeat,5000).unref();

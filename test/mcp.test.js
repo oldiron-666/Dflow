@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {presetDefaults} from '../presets.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -34,6 +35,8 @@ test('stdio MCP end-to-end on isolated DFlow data', { timeout: 60000 }, async ()
     const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'mcp-server.js')], cwd: root, env: { ...process.env, DFLOW_PORT: String(port) }, maxBufferSize: 64 * 1024 * 1024 });
     client = new Client({ name: 'dflow-test', version: '0.1' });
     await client.connect(transport);
+    const packageInfo = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
+    assert.equal(client.getServerVersion().version, packageInfo.version);
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map(x => x.name).sort(), ['claim_direct_reverse','claim_next_pending','complete_pending','create_worded_card','fail_pending','get_reverse_workflow','import_metadata_png','list_pending','read_pending_image']);
     const call = (name, args = {}) => client.callTool({ name, arguments: args });
@@ -44,7 +47,7 @@ test('stdio MCP end-to-end on isolated DFlow data', { timeout: 60000 }, async ()
     assert.ok(sessions.some(x=>x.name==='dflow-test'));
     const configResponse=await fetch(`http://127.0.0.1:${port}/api/mcp/presets`);
     const config=await configResponse.json();
-    assert.deepEqual(config.expansion.map(x=>x.name), ['通用扩写']);
+    assert.deepEqual(config.expansion.map(x=>x.name), presetDefaults().expansion.map(x=>x.name));
     const update=await fetch(`http://127.0.0.1:${port}/api/mcp/presets`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...config,reverse:[...config.reverse,{name:'自定义反推',content:'先观察事实'}],expansion:[...config.expansion,{name:'自定义扩写',content:'完整扩写画面'}]})});
     assert.equal(update.status,200);
     const library = JSON.parse(await fs.readFile(path.join(temp,'data','mcp-presets','config.json'),'utf8'));

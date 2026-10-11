@@ -9,26 +9,21 @@ export const PRESET_STORE = 'mcp-presets.json';
 export function presetDefaults() {
   const presetsDir = path.join(project, 'presets');
   const expansionList = [];
-  const preferredOrder = ['通用扩写', '插画', '电影感动漫', '动漫海报', '巨构提示词'];
-  const loaded = new Set();
+  const preferredOrder = [
+    '通用扩写', '插画', '电影', '海报', '巨构提示词',
+    // These five were already published by the upstream 0.3.4 release.
+    'nai提示词测试-Antigravity', 'nai提示词测试-ChatGPT',
+    'nai提示词测试-deepseekv4pro', 'nai提示词测试-gemini3.8flash', 'nai提示词测试-muse'
+  ];
   if (fs.existsSync(presetsDir)) {
     for (const name of preferredOrder) {
       const file = path.join(presetsDir, `${name}.txt`);
       if (fs.existsSync(file)) {
         expansionList.push({ name, content: fs.readFileSync(file, 'utf8') });
-        loaded.add(name);
       }
     }
-    const files = fs.readdirSync(presetsDir).sort();
-    for (const file of files) {
-      if (file.endsWith('.txt')) {
-        const name = path.basename(file, '.txt');
-        if (!loaded.has(name)) {
-          expansionList.push({ name, content: fs.readFileSync(path.join(presetsDir, file), 'utf8') });
-          loaded.add(name);
-        }
-      }
-    }
+    // Only explicitly published built-ins belong in defaults. Local TXT files
+    // must not become shared presets just because they exist in this directory.
   }
   if (!expansionList.length) {
     expansionList.push({ name: '通用扩写', content: DEFAULT_EXPANSION });
@@ -56,6 +51,36 @@ export function validatePresets(raw) {
   const defaultReverse = String(raw.defaultReverse || ''), defaultExpansion = String(raw.defaultExpansion || '');
   if (!reverse.some(x => x.name === defaultReverse) || !expansion.some(x => x.name === defaultExpansion)) throw Error('默认预设必须存在');
   return { reverse, expansion, defaultReverse, defaultExpansion };
+}
+
+
+const EXPANSION_ALIASES = new Map([['动漫海报', '海报'], ['电影感动漫', '电影']]);
+export const canonicalExpansionName = name => EXPANSION_ALIASES.get(name) || name;
+
+// Preserve personal content/defaults. An existing new-name entry wins collisions;
+// only missing published built-ins are added, without exceeding the library limit.
+export function migratePresetNames(raw) {
+  const config = validatePresets(raw);
+  const names = new Set(config.expansion.map(entry => entry.name));
+  config.expansion = config.expansion
+    .filter(entry => entry.name === canonicalExpansionName(entry.name) || !names.has(canonicalExpansionName(entry.name)))
+    .map(entry => ({ ...entry, name: canonicalExpansionName(entry.name) }));
+  config.defaultExpansion = canonicalExpansionName(config.defaultExpansion);
+  return validatePresets(config);
+}
+export function syncPresetLibrary(raw, defaults = presetDefaults()) {
+  const config = migratePresetNames(raw);
+  for (const type of ['reverse', 'expansion']) {
+    const names = new Set(config[type].map(entry => entry.name));
+    for (const entry of defaults[type]) {
+      if (config[type].length >= 30) break;
+      if (!names.has(entry.name)) {
+        config[type].push({ ...entry });
+        names.add(entry.name);
+      }
+    }
+  }
+  return validatePresets(config);
 }
 
 

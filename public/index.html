@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>DFlow / PFlow</title>
-  <link rel="stylesheet" href="/style.css?v=20261004-02">
+  <link rel="stylesheet" href="/style.css?v=20261011-07">
 </head>
 <body>
 <header>
@@ -103,6 +103,11 @@
   <button type="button" id="importShare">导入分享</button>
   <input id="shareFileInput" type="file" accept=".json,.dflow-share.json,application/json" hidden>
   <button type="button" id="manualWorded">手写提示词</button>
+  <div class="reverse-batch-controls">
+    <input id="reverseBatchInstruction" maxlength="3000" placeholder="本次批量反推的附加要求（可选）" aria-label="批量反推附加要求">
+    <button type="button" id="startReverseBatch" title="在当前已连接的 Agent 中自动处理队列，不另开聊天窗口">开始自动反推</button>
+    <span id="reverseBatchStatus" role="status" aria-live="polite"></span>
+  </div>
 </div>
 <div id="metadataUpload" hidden><label>导入 ComfyUI PNG（支持多选）<input id="metadataFiles" type="file" accept="image/png,.png" multiple></label><span>需图片本身保留工作流／生成信息；网站预览图通常不含元数据。</span></div>
 <main id="gallery" aria-live="polite"></main>
@@ -150,9 +155,15 @@
       <div class="settings-link-row">
         <a href="https://www.pixiv.net/" target="_blank" rel="noopener noreferrer" class="settings-link">访问 Pixiv 网页版登录 ↗</a>
       </div>
+      <div class="settings-inline-actions">
+        <button type="button" id="pixivOfficialLogin" class="btn-subtle">使用 Pixiv 官方登录</button>
+        <button type="button" id="cancelPixivLogin" class="btn-subtle" hidden>取消等待</button>
+        <span id="pixivLoginStatus" class="status-inline" role="status"></span>
+      </div>
+      <small class="settings-tip">在本机 Chrome / Edge 中打开官方登录：使用官方页面提供的账号或第三方登录选项，完成后自动同步。DFlow 不接收你的密码。局域网设备请在主机登录，或使用下面的手动方式。</small>
       <label>Pixiv Cookie (PHPSESSID)<textarea id="pixivCookie" rows="3" placeholder="粘贴浏览器 Cookie，例如：PHPSESSID=12345678_abcdef..."></textarea></label>
       <small class="settings-tip">获取方法：浏览器登录 pixiv.net 网页版后，按 F12 打开开发者工具 →「应用程序 (Application)」→「Cookie」→ 复制 <code>PHPSESSID</code> 的值粘贴在此。</small>
-      <label style="margin-top:12px;">App Refresh Token (可选)<input id="pixivRefreshToken" type="password" placeholder="可选：OAuth Refresh Token（如使用第三方客户端凭证）"></label>
+      <label style="margin-top:12px;">App Refresh Token（备用保存；当前网页接口不使用）<input id="pixivRefreshToken" type="password" placeholder="可选：OAuth Refresh Token（如使用第三方客户端凭证）"></label>
     </div>
 
     <!-- Tab 3: Translation Engines -->
@@ -227,7 +238,7 @@
         </section>
         <section class="mcp-tile mcp-agents" aria-labelledby="mcpAgentsTitle">
           <div class="mcp-tile-title"><h4 id="mcpAgentsTitle">已连接的 Agent</h4><button type="button" id="refreshMcpSessions" class="btn-subtle">刷新</button></div>
-          <p class="settings-desc">网页 AI直推会先唤起下面选定的 DSH 窗口，再由该窗口调用 dflow-local MCP 领取任务。断开只影响当前会话，客户端可能自动重连。</p>
+          <p class="settings-desc">网页 AI直推会先唤起下面选定的 DSH 窗口，再由该窗口调用 dflow-local MCP 领取任务。不固定窗口时自动复用最近活跃的在线窗口。断开后需在客户端重新连接。仅有 MCP 工具连接、没有唤起桥接的 Agent 不能从网页自动启动。</p>
           <div id="mcpSessions" aria-live="polite">正在读取…</div>
           <div class="dsh-bridge-head"><strong>DSH 直推窗口</strong><button type="button" id="refreshDshSessions" class="btn-subtle">刷新</button></div>
           <div id="dshBridgeStatus" class="status-inline" aria-live="polite">正在检测 DSH Bridge…</div>
@@ -301,9 +312,59 @@
     <p>GitHub 上有更新版本，是否稍后更新？</p>
     <div class="update-version-row"><span>当前</span><code class="update-current"></code></div>
     <div class="update-version-row"><span>GitHub</span><code class="update-latest"></code></div>
-    <div class="update-notes-container">
-      <div class="update-notes-title">更新公告（v0.3 ~ v0.33）：</div>
-      <div class="update-notes-list">
+    <details class="update-notes-container">
+      <summary class="update-notes-title">更新公告（v0.3.0 ~ v0.3.8）· 点击展开 / 收起</summary>
+      <div class="update-notes-list" tabindex="0" aria-label="历次更新公告">
+        <div class="update-notes-item">
+          <strong>v0.3.8 · 2026-10-11</strong>
+          <ul>
+            <li>海报、电影预设改用当前文件名及名称，不再保留「动漫海报」「电影感动漫」旧名。</li>
+            <li>旧库中的这两项名称及默认选择自动迁移，保留内容和其他私人预设；旧卡片引用继续可用。</li>
+            <li>收紧默认预设列表及 Git 忽略规则，防止额外本地预设意外发布。</li>
+          </ul>
+        </div>
+        <div class="update-notes-item">
+          <strong>v0.3.7 · 2026-10-11</strong>
+          <ul>
+            <li>本地收藏列表使用原图宽高各约 50% 的 WebP 缩略图，按需生成并缓存；原图保留，大图查看与 AI 反推仍用高清原图，不改变卡片比例和样式。</li>
+            <li>更新公告默认折叠，展开后可滚动查看多个历史版本，最新版置顶。</li>
+            <li>用新版「海报」「电影」文件替换内置「动漫海报」「电影感动漫」预设，保留原预设名称，不覆盖私人自定义预设。</li>
+          </ul>
+        </div>
+        <div class="update-notes-item">
+          <strong>v0.3.6 · 2026-10-11</strong>
+          <ul>
+            <li>恢复卡片随图片自然比例显示，撤回等高卡片和人工留边；恢复横图底栏、竖图侧栏，与其他收藏栏保持一致。</li>
+            <li>待反推改为按编号轮流进入固定列：7 列时 8、9、10 在第 1、2、3 列，不再按最短列乱投或夹入暂停卡片。</li>
+            <li>各列独立紧凑堆叠，不等整行最高卡片；保留自然高低差，窗口缩放及队列操作后自动补位，不改变图片或卡片形状。</li>
+          </ul>
+        </div>
+        <div class="update-notes-item">
+          <strong>v0.3.5 · 2026-10-11（等高方案已在 v0.3.6 撤回）</strong>
+          <ul>
+            <li>修正待反推区的视觉顺序：等高卡片逐行排列，第二排 8、9、10 相邻且从左到右递增，暂停项不再穿插于编号之间。</li>
+            <li>统一侧边操作栏和编号位置，横竖图完整显示、不裁切；比例差异只在卡片内部留边，卡片之间保持正常间距。</li>
+            <li>窗口缩放、移出、暂停及重新入队后保持队列顺序；其他收藏栏保留自然高度紧凑排版。</li>
+          </ul>
+        </div>
+        <div class="update-notes-item">
+          <strong>v0.3.4 · 2026-10-11</strong>
+          <ul>
+            <li>登录修复：Danbooru 支持中文用户名与更准确的错误提示；Pixiv 支持官方网页登录窗口，登录成功后自动同步 Cookie，保留手动方式。</li>
+            <li>MCP 与设置优化：修复初始化、重连及状态不同步，减少设置页面闪烁和重复重绘。</li>
+            <li>收藏排版优化：按卡片实际高度紧凑排版，修复高矮混排的大块空白；移动后自动补位，列数随窗口宽度调整。</li>
+            <li>排序修复：待反推严格按队列顺序排列；其余收藏栏横图优先，再按提示词写入时间从新到旧。</li>
+            <li>修复 Agent 创建的无图提示词卡片无法粘贴补图，以及收藏同步覆盖卡片的问题。</li>
+            <li>新增浏览器一键批量反推：通过 DSH Bridge 复用已有 Agent 聊天，按队列处理并写回卡片；仅连接标准 MCP 的 Agent 暂不支持网页唤起。</li>
+            <li>减少重复模糊、监听和动画负担，保留翻转与视差风格。升级后需安装依赖、重启服务并强制刷新。</li>
+          </ul>
+        </div>
+        <div class="update-notes-item">
+          <strong>v0.3.4 · 2026-10-08（远端历史版本）</strong>
+          <ul>
+            <li>当时增加 NAI 测试扩写预设及内置预设同步机制；这是远端已有历史提交，并非本次新增上传的私人预设。</li>
+          </ul>
+        </div>
         <div class="update-notes-item">
           <strong>v0.3.3</strong>
           <ul>
@@ -332,7 +393,7 @@
           </ul>
         </div>
       </div>
-    </div>
+    </details>
     <div id="updateStatusText" class="update-status-text" hidden></div>
     <div class="update-dialog-actions">
       <button id="updateNow" type="button" class="btn-primary update-now-btn">一键拉取更新</button>
@@ -342,6 +403,6 @@
     </div>
   </div>
 </dialog>
-<script type="module" src="/app.js?v=20261004-04"></script>
+<script type="module" src="/app.js?v=20261011-07"></script>
 </body>
 </html>

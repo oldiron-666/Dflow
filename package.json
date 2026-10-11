@@ -1,18 +1,25 @@
 {
   "name": "dflow",
-  "version": "0.3.3",
+  "version": "0.3.8",
   "private": true,
   "description": "本地 Danbooru 与 Pixiv 瀑布流画廊及 AI 提示词工作流套件",
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "mcp": "node mcp-server.js"
+    "mcp": "node mcp-server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",
     "express": "^5.1.0",
     "image-size": "^2.0.4",
+    "playwright-core": "^1.64.0",
+    "sharp": "^0.35.5",
+    "undici": "^6.29.0",
     "zod": "^4.6.5"
+  },
+  "engines": {
+    "node": ">=20.9.0"
   }
 }
