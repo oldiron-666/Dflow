@@ -1,0 +1,4 @@
+interface:
+  display_name: "AIprompt 全能视觉提示词套件"
+  short_description: "创建、反推和生成灵感场景"
+  default_prompt: "使用 $AIprompt 根据我的概念或参考图片创建、反推英文 Krea 2 提示词，或用灵感模式提供 5 个中文场景概要。灵感模式每项只能输出中文标题与一个仅含中文概要的代码框；不得输出提示词、预设、设置、参数或其他说明。"
